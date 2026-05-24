@@ -141,3 +141,23 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Python 虚拟环境
+fhot-venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时数据
+data/
+*.db
+*.db-journal
+
+# 日志
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
