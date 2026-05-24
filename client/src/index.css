@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1E40AF;
+  --color-primary-light: #3B82F6;
+  --color-accent: #F59E0B;
+  --color-surface: #FFFFFF;
+  --color-muted: #64748B;
+}
+
+body {
+  font-family: "Fira Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Fira Code", "Fira Sans", monospace;
+}
+
+/* 数字等宽展示 */
+.font-mono, .tabular-nums {
+  font-family: "Fira Code", monospace;
+  font-variant-numeric: tabular-nums;
+}

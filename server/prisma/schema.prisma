@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Keyword {
+  id        String    @id @default(uuid())
+  text      String    @unique
+  type      String    @default("generic")
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  hotspots  Hotspot[]
+}
+
+model Hotspot {
+  id               String    @id @default(uuid())
+  title            String
+  content          String
+  url              String
+  source           String
+  sourceType       String
+
+  // AI 分析结果
+  eventType        String?
+  isSubstantial    Boolean   @default(true)
+  relevance        Int
+  relevanceReason  String?
+  keywordMentioned Boolean
+  importance       String
+  importanceReason String?
+  summary          String?
+  affectedHoldings Boolean   @default(false)
+  eventFingerprint String?
+
+  // 去重与聚合
+  relatedSources   String?
+  isPrimary        Boolean   @default(true)
+
+  // 时间
+  publishedAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  // 关联
+  keywordId        String
+  keyword          Keyword   @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  notifications    Notification[]
+
+  @@unique([url, source])
+  @@index([keywordId])
+  @@index([eventFingerprint])
+  @@index([publishedAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  type      String    @default("hotspot")
+  title     String
+  content   String?
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  hotspotId String
+  hotspot   Hotspot   @relation(fields: [hotspotId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+}
+
+model SourceWatermark {
+  id            String    @id @default(uuid())
+  source        String    @unique
+  lastId        String?
+  lastTimestamp Int?
+  extraData     String?
+  updatedAt     DateTime  @updatedAt
+}
+
+model MacroObservation {
+  id        String    @id @default(uuid())
+  seriesId  String    @unique
+  lastDate  String
+  lastValue Float?
+  updatedAt DateTime  @updatedAt
+}
