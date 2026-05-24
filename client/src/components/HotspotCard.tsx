@@ -123,6 +123,7 @@ export function HotspotCard({ hotspot, onNew }: HotspotCardProps) {
           <button
             onClick={() => setExpanded(!expanded)}
             className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors duration-150 cursor-pointer shrink-0 self-start"
+            aria-label={expanded ? '收起详情' : '展开详情'}
           >
             {expanded ? (
               <ChevronUp className="w-4 h-4 text-slate-400" />

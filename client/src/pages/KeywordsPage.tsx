@@ -125,6 +125,7 @@ export function KeywordsPage() {
                   onClick={() => handleToggle(kw)}
                   className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors duration-150 cursor-pointer"
                   title={kw.isActive ? '暂停监控' : '启用监控'}
+                  aria-label={kw.isActive ? '暂停监控' : '启用监控'}
                 >
                   {kw.isActive ? (
                     <Power className="w-4 h-4 text-emerald-500" />
@@ -136,6 +137,7 @@ export function KeywordsPage() {
                   onClick={() => handleDelete(kw)}
                   className="p-1.5 rounded-lg hover:bg-red-50 transition-colors duration-150 cursor-pointer"
                   title="删除"
+                  aria-label={`删除关键词 ${kw.text}`}
                 >
                   <Trash2 className="w-4 h-4 text-slate-300 hover:text-red-500" />
                 </button>

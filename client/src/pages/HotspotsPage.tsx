@@ -15,6 +15,8 @@ export function HotspotsPage() {
   const [source, setSource] = useState('');
   const [importance, setImportance] = useState('');
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [checking, setChecking] = useState(false);
+  const [checkMsg, setCheckMsg] = useState<string | null>(null);
 
   const load = useCallback(async (p: number) => {
     setLoading(true);
@@ -81,10 +83,18 @@ export function HotspotsPage() {
   }, []);
 
   const handleTriggerCheck = async () => {
+    if (checking) return;
+    setChecking(true);
+    setCheckMsg(null);
     try {
       await hotspotsApi.triggerCheck();
+      setCheckMsg('检测完成，新热点将实时推送');
+      await load(page);
     } catch (e: any) {
-      alert(e.message || '触发失败');
+      setCheckMsg(e.message || '检测失败');
+    } finally {
+      setChecking(false);
+      setTimeout(() => setCheckMsg(null), 4000);
     }
   };
 
@@ -134,11 +144,17 @@ export function HotspotsPage() {
         />
         <button
           onClick={handleTriggerCheck}
-          className="px-3 py-1.5 text-sm text-slate-500 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors duration-200 cursor-pointer flex items-center gap-1.5"
+          disabled={checking}
+          className="px-3 py-1.5 text-sm text-slate-500 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors duration-200 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <RefreshCw className="w-4 h-4" />
-          手动检测
+          <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
+          {checking ? '检测中...' : '手动检测'}
         </button>
+        {checkMsg && (
+          <span className={`text-xs ml-2 ${checkMsg.includes('失败') ? 'text-red-500' : 'text-emerald-600'}`}>
+            {checkMsg}
+          </span>
+        )}
       </div>
 
       {/* 热点列表 */}
