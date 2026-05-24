@@ -5,7 +5,7 @@ import { Activity, Settings, TrendingUp } from 'lucide-react';
 
 type Route = 'hotspots' | 'keywords';
 
-function useHashRoute(): [Route, (r: Route) => void] {
+function App() {
   const getRoute = (): Route => {
     const hash = window.location.hash.replace('#/', '');
     if (hash === 'keywords') return 'keywords';
