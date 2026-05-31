@@ -80,3 +80,32 @@ export interface HotspotWithKeyword {
   keywordId: string;
   keyword: { id: string; text: string; type: string } | null;
 }
+
+// ========== 搜索功能类型 ==========
+
+export interface SearchParams {
+  query: string;
+  sources?: SourceName[];
+  dateRange?: '7d' | '30d' | '90d' | 'all';
+  limit?: number;
+}
+
+export interface SearchResultItem {
+  title: string;
+  content: string;
+  url: string;
+  source: SourceName;
+  sourceType: SourceType;
+  publishedAt: string | null;
+  aiAnalysis: AIAnalysis | null;
+  matchedTerms: string[];
+}
+
+export interface SearchResponse {
+  query: string;
+  totalResults: number;
+  searchTimeMs: number;
+  items: SearchResultItem[];
+  expandedKeywords: string[];
+  sourceStats: Record<string, number>;
+}

@@ -36,19 +36,27 @@ function detectKeywordType(keyword: string): KeywordType {
 
 // ========== Query Expansion ==========
 
+const MAX_CACHE_SIZE = 500;
 const expansionCache = new Map<string, string[]>();
 
-export async function expandKeyword(keyword: string): Promise<string[]> {
-  if (expansionCache.has(keyword)) {
-    return expansionCache.get(keyword)!;
+function setExpansionCache(key: string, value: string[]): void {
+  if (expansionCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = expansionCache.keys().next().value;
+    if (firstKey) expansionCache.delete(firstKey);
   }
+  expansionCache.set(key, value);
+}
+
+export async function expandKeyword(keyword: string): Promise<string[]> {
+  const cached = expansionCache.get(keyword);
+  if (cached) return cached;
 
   const coreTerms = extractCoreTerms(keyword);
   const kwType = detectKeywordType(keyword);
 
   if (!process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY === 'sk-xxx') {
     const result = [keyword, ...coreTerms];
-    expansionCache.set(keyword, result);
+    setExpansionCache(keyword, result);
     return result;
   }
 
@@ -58,6 +66,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
       stock_name: '如果是公司名，生成：股票代码、英文名、常见简称、所属板块',
       sector: '如果是板块/概念，生成：板块内最重要的成分股代码（3-8只）、上下游板块名',
       macro_indicator: '如果是经济指标，生成：中英文名称、常见别称、发布机构、关联市场',
+      policy: '如果是政策/监管，生成：政策全称、简称、涉及行业、相关机构',
       generic: '生成各种写法、中英文对照、常见别称',
     };
 
@@ -103,7 +112,7 @@ ${typeHints[kwType] || typeHints.generic}
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
       const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map((s) => s.trim()).filter(Boolean)])];
-      expansionCache.set(keyword, expanded);
+      setExpansionCache(keyword, expanded);
       console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
       return expanded;
     }
@@ -112,7 +121,7 @@ ${typeHints[kwType] || typeHints.generic}
   }
 
   const fallback = [keyword, ...coreTerms];
-  expansionCache.set(keyword, fallback);
+  setExpansionCache(keyword, fallback);
   return fallback;
 }
 
@@ -126,6 +135,127 @@ function extractCoreTerms(keyword: string): string[] {
     }
   }
   return [...new Set(terms)].filter((t) => t.toLowerCase() !== keyword.toLowerCase());
+}
+
+// ========== 搜索意图路由 ==========
+
+const VALID_SOURCES = ['sec_edgar', 'juchao', 'cailianshe', 'eastmoney', 'fred', 'nbs'];
+
+export function normalizeSourceNames(raw: string[]): string[] {
+  const aliasMap: Record<string, string> = {
+    sec: 'sec_edgar', edgar: 'sec_edgar', 'sec edgar': 'sec_edgar',
+    cls: 'cailianshe', '财联社': 'cailianshe',
+    '东财': 'eastmoney', east_money: 'eastmoney',
+    '巨潮': 'juchao',
+    '国家统计局': 'nbs',
+  };
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const s of raw) {
+    const key = s.toLowerCase().trim();
+    const mapped = aliasMap[key] ?? (VALID_SOURCES.includes(key) ? key : null);
+    if (mapped && !seen.has(mapped)) {
+      seen.add(mapped);
+      result.push(mapped);
+    }
+  }
+  return result;
+}
+
+const SOURCE_DESCRIPTIONS: Record<string, string> = {
+  sec_edgar: 'SEC EDGAR — 美股上市公司法定公告（10-K年报、10-Q季报、8-K重大事件、Form 4高管交易等）',
+  juchao: '巨潮资讯 — A股上市公司公告（年度报告、季度报告、重大合同、股权变动、董事会决议等）',
+  cailianshe: '财联社 — A股实时财经快讯（市场动态、行业政策、公司新闻短讯）',
+  eastmoney: '东财全球 — 7×24全球财经快讯',
+  fred: 'FRED — 美国宏观经济指标时间序列（GDP、CPI、失业率、利率、PMI等）',
+  nbs: '国家统计局 — 中国宏观经济指标时间序列（CPI、PPI、GDP、失业率、PMI等）',
+};
+
+export async function searchStrategy(query: string): Promise<{
+  reasoning: string;
+  searchTerms: string[];
+  targetSources: string[];
+}> {
+  if (!process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY === 'sk-xxx') {
+    return { reasoning: '', searchTerms: [query], targetSources: [] };
+  }
+
+  const allSources = ['sec_edgar', 'juchao', 'cailianshe', 'eastmoney', 'fred', 'nbs'];
+
+  try {
+    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: `你是金融信息检索策略专家。给定用户查询和可用信源，制定最高效的搜索方案。
+
+## 可用信源
+${allSources.map(s => `- ${SOURCE_DESCRIPTIONS[s]}`).join('\n')}
+
+## 股票代码速查表（A股知名公司 → 6位代码，必须使用代码而非公司名）
+贵州茅台:600519  寒武纪:688256  万科A:000002  宁德时代:300750
+比亚迪:002594  招商银行:600036  中国平安:601318  五粮液:000858
+美的集团:000333  格力电器:000651  恒瑞医药:600276  药明康德:603259
+中芯国际:688981  海康威视:002415  隆基绿能:601012  中国中免:601888
+迈瑞医疗:300760  顺丰控股:002352  伊利股份:600887  海天味业:603288
+牧原股份:002714  中国神华:601088  紫金矿业:601899  长江电力:600900
+中兴通讯:000063  立讯精密:002475  工业富联:601138  韦尔股份:603501
+北方华创:002371  金山办公:688111  中微公司:688012  科大讯飞:002230
+
+## 搜索规则（极其重要，必须遵守）
+1. 搜A股公司公告时，searchTerms 的第一个元素必须是6位数字股票代码。绝不能用公司中文名替代股票代码
+2. 如果公司不在速查表中，推断最可能的代码，searchTerms 格式为纯6位数字
+3. 美股公司用 ticker（如 AAPL、TSLA、MSFT），搜 SEC EDGAR
+4. 宏观数据用指标标准名（CPI→CPIAUCSL、GDP→GDP），搜对应宏观源
+5. 不要生成公司中文名作为搜索词——巨潮资讯用公司名搜会返回不相关公司的公告
+
+## targetSources 硬约束
+只能使用这些精确值：sec_edgar, juchao, cailianshe, eastmoney, fred, nbs
+错误写法（会失败）：sec、edgar、cls、财联社、巨潮
+
+## 输出格式
+只输出 JSON：
+{
+  "reasoning": "一两句话说明推理过程",
+  "searchTerms": ["6位代码或ticker", "辅助检索词"],
+  "targetSources": ["juchao"]
+}`,
+          },
+          { role: 'user', content: query },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(`DeepSeek API error: ${data.error.message || JSON.stringify(data.error)}`);
+    }
+    const rawContent: string = data.choices?.[0]?.message?.content || '';
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const rawSources: string[] = Array.isArray(parsed.targetSources) ? parsed.targetSources : [];
+      return {
+        reasoning: String(parsed.reasoning || ''),
+        searchTerms: Array.isArray(parsed.searchTerms) ? parsed.searchTerms : [query],
+        targetSources: normalizeSourceNames(rawSources),
+      };
+    }
+  } catch (error) {
+    console.error('Search strategy generation failed:', error);
+  }
+
+  return { reasoning: '', searchTerms: [query], targetSources: [] };
 }
 
 // ========== 关键词预匹配 ==========

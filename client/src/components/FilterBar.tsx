@@ -1,58 +1,143 @@
-import { SOURCE_LABELS } from '../types/index.js';
-import { Filter, Radio } from 'lucide-react';
+import { SlidersHorizontal, X } from 'lucide-react';
+import type { HotspotFilter } from '../types/index.js';
 
 interface FilterBarProps {
-  source: string;
-  importance: string;
-  onSourceChange: (v: string) => void;
-  onImportanceChange: (v: string) => void;
+  filter: HotspotFilter;
+  onFilterChange: (filter: HotspotFilter) => void;
 }
 
-const SOURCES: { value: string; label: string }[] = [
-  { value: '', label: '全部信源' },
-  ...Object.entries(SOURCE_LABELS).map(([k, v]) => ({ value: k, label: v })),
+const sources = [
+  { value: 'SEC_EDGAR', label: 'SEC EDGAR' },
+  { value: 'JUCHAO', label: '巨潮公告' },
+  { value: 'CAILIAN', label: '财联社' },
+  { value: 'EASTMONEY', label: '东财全球' },
+  { value: 'FRED', label: 'FRED' },
+  { value: 'NBS', label: '国家统计局' },
 ];
 
-const IMPORTANCES: { value: string; label: string }[] = [
-  { value: '', label: '全部重要性' },
-  { value: 'high', label: '高' },
-  { value: 'medium', label: '中' },
-  { value: 'low', label: '低' },
-];
+export function FilterBar({ filter, onFilterChange }: FilterBarProps) {
+  const hasActiveFilters =
+    (filter.sources && filter.sources.length > 0) ||
+    filter.importance ||
+    filter.isSubstantial !== undefined ||
+    filter.keywordId;
 
-const selectBase =
-  'pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-shadow duration-150 appearance-none cursor-pointer';
+  const clearFilters = () => {
+    onFilterChange({});
+  };
 
-export function FilterBar({ source, importance, onSourceChange, onImportanceChange }: FilterBarProps) {
   return (
-    <div className="flex gap-2">
-      <div className="relative">
-        <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <select
-          value={importance}
-          onChange={(e) => onImportanceChange(e.target.value)}
-          className={selectBase}
-        >
-          {IMPORTANCES.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+    <div className="bg-bg-surface border border-border rounded-2xl p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal className="w-4 h-4 text-accent-purple" />
+          <span className="text-text-primary text-sm font-semibold">筛选条件</span>
+        </div>
+        {hasActiveFilters && (
+          <button
+            onClick={clearFilters}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+            清除筛选
+          </button>
+        )}
       </div>
-      <div className="relative">
-        <Radio className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <select
-          value={source}
-          onChange={(e) => onSourceChange(e.target.value)}
-          className={selectBase}
-        >
-          {SOURCES.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+
+      {/* Filter rows */}
+      <div className="grid grid-cols-4 gap-4">
+        {/* Source filter */}
+        <div className="space-y-1.5">
+          <label className="text-text-muted text-xs font-medium">信源</label>
+          <select
+            value={filter.sources?.[0] || ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              onFilterChange({
+                ...filter,
+                sources: value ? [value] : undefined,
+              });
+            }}
+            className="w-full px-3 py-2 bg-bg-input border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
+          >
+            <option value="">全部信源</option>
+            {sources.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Importance filter */}
+        <div className="space-y-1.5">
+          <label className="text-text-muted text-xs font-medium">重要性</label>
+          <select
+            value={filter.importance || ''}
+            onChange={(e) => {
+              const value = e.target.value as 'high' | 'medium' | 'low' | '';
+              onFilterChange({
+                ...filter,
+                importance: value || undefined,
+              });
+            }}
+            className="w-full px-3 py-2 bg-bg-input border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
+          >
+            <option value="">全部</option>
+            <option value="HIGH">高</option>
+            <option value="MEDIUM">中</option>
+            <option value="LOW">低</option>
+          </select>
+        </div>
+
+        {/* Substantial filter */}
+        <div className="space-y-1.5">
+          <label className="text-text-muted text-xs font-medium">事件性质</label>
+          <select
+            value={
+              filter.isSubstantial === undefined
+                ? ''
+                : filter.isSubstantial
+                ? 'substantial'
+                : 'non-substantial'
+            }
+            onChange={(e) => {
+              const value = e.target.value;
+              onFilterChange({
+                ...filter,
+                isSubstantial:
+                  value === ''
+                    ? undefined
+                    : value === 'substantial',
+              });
+            }}
+            className="w-full px-3 py-2 bg-bg-input border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
+          >
+            <option value="">全部</option>
+            <option value="substantial">实质性事件</option>
+            <option value="non-substantial">非实质性</option>
+          </select>
+        </div>
+
+        {/* Sort */}
+        <div className="space-y-1.5">
+          <label className="text-text-muted text-xs font-medium">排序</label>
+          <select
+            value={filter.sortBy || 'createdAt'}
+            onChange={(e) => {
+              onFilterChange({
+                ...filter,
+                sortBy: e.target.value as 'createdAt' | 'relevance' | 'publishedAt',
+              });
+            }}
+            className="w-full px-3 py-2 bg-bg-input border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
+          >
+            <option value="createdAt">入库时间</option>
+            <option value="relevance">相关度</option>
+            <option value="publishedAt">发布时间</option>
+          </select>
+        </div>
       </div>
     </div>
   );

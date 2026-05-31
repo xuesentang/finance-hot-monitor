@@ -1,224 +1,312 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Activity, TrendingUp, AlertTriangle, Radio } from 'lucide-react';
-import { hotspotsApi } from '../services/api.js';
-import { getSocket } from '../services/socket.js';
-import { HotspotCard } from '../components/HotspotCard.js';
 import { FilterBar } from '../components/FilterBar.js';
-import type { Hotspot, Stats } from '../types/index.js';
+import { HotspotCard } from '../components/HotspotCard.js';
+import { hotspotsApi, notificationsApi } from '../services/api.js';
+import { getSocket } from '../services/socket.js';
+import type { Hotspot, HotspotFilter, Notification } from '../types/index.js';
+import { Activity, Bell, TrendingUp, Shield, Zap } from 'lucide-react';
 
 export function HotspotsPage() {
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [stats, setStats] = useState({
+    totalHotspots: 0,
+    newToday: 0,
+    highRelevance: 0,
+    sourcesActive: 6,
+  });
+  const [filter, setFilter] = useState<HotspotFilter>({});
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [source, setSource] = useState('');
-  const [importance, setImportance] = useState('');
-  const [newIds, setNewIds] = useState<Set<string>>(new Set());
-  const [checking, setChecking] = useState(false);
-  const [checkMsg, setCheckMsg] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+  const [newHotspotIds, setNewHotspotIds] = useState<Set<string>>(new Set());
+  const prevHotspotsRef = useRef<Set<string>>(new Set());
 
-  const load = useCallback(async (p: number) => {
-    setLoading(true);
+  const fetchHotspots = useCallback(async () => {
     try {
-      const params: Record<string, string> = { page: String(p), limit: '20' };
-      if (source) params.source = source;
-      if (importance) params.importance = importance;
+      const params: Record<string, string> = {};
+      if (filter.sources?.length) params.source = filter.sources[0];
+      if (filter.importance) params.importance = filter.importance;
+      if (filter.isSubstantial !== undefined) params.isSubstantial = String(filter.isSubstantial);
+      if (filter.keywordId) params.keywordId = filter.keywordId;
+      if (filter.sortBy) params.sortBy = filter.sortBy;
 
-      const [data, statsData] = await Promise.all([
-        hotspotsApi.list(params),
-        hotspotsApi.stats(),
-      ]);
-
+      const data = await hotspotsApi.list(params);
+      const currentIds = new Set(data.data.map((h) => h.id));
+      const newIds = new Set<string>();
+      if (prevHotspotsRef.current.size > 0) {
+        for (const id of currentIds) {
+          if (!prevHotspotsRef.current.has(id)) {
+            newIds.add(id);
+          }
+        }
+      }
+      if (newIds.size > 0) {
+        setNewHotspotIds(newIds);
+        setTimeout(() => setNewHotspotIds(new Set()), 5000);
+      }
+      prevHotspotsRef.current = currentIds;
       setHotspots(data.data);
-      setTotalPages(data.pagination.totalPages);
-      setStats(statsData);
-    } catch (e) {
-      console.error('Failed to load hotspots:', e);
+    } catch (error) {
+      console.error('Failed to fetch hotspots:', error);
     } finally {
       setLoading(false);
     }
-  }, [source, importance]);
+  }, [filter]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const data = await hotspotsApi.stats();
+      setStats({
+        totalHotspots: data.total,
+        newToday: data.today,
+        highRelevance: data.high,
+        sourcesActive: 6,
+      });
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    }
+  }, []);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const data = await notificationsApi.list({ limit: '20' });
+      setNotifications(data);
+    } catch (error) {
+      console.error('Failed to fetch notifications:', error);
+    }
+  }, []);
 
   useEffect(() => {
-    load(page);
-  }, [load, page]);
+    fetchHotspots();
+    fetchStats();
+    fetchNotifications();
+  }, [fetchHotspots, fetchStats, fetchNotifications]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [source, importance]);
-
-  // 用 ref 保持筛选条件最新值，避免 WebSocket 事件中闭包过时
-  const filterRef = useRef({ source, importance });
-  filterRef.current = { source, importance };
-
-  // WebSocket: 实时接收新热点
   useEffect(() => {
     const socket = getSocket();
 
-    const handleNew = (hotspot: Hotspot) => {
-      // 检查是否符合当前筛选条件
-      const { source: s, importance: imp } = filterRef.current;
-      if (s && hotspot.source !== s) return;
-      if (imp && hotspot.importance !== imp) return;
-
-      setNewIds((prev) => new Set([...prev, hotspot.id]));
-      setHotspots((prev) => {
-        if (prev.some((h) => h.id === hotspot.id)) return prev;
-        return [hotspot, ...prev];
-      });
+    socket.on('newHotspot', (hotspot: Hotspot) => {
+      setHotspots((prev) => [hotspot, ...prev]);
+      setNewHotspotIds((prev) => new Set(prev).add(hotspot.id));
       setTimeout(() => {
-        setNewIds((prev) => {
+        setNewHotspotIds((prev) => {
           const next = new Set(prev);
           next.delete(hotspot.id);
           return next;
         });
       }, 5000);
-    };
+    });
 
-    socket.on('hotspot:new', handleNew);
+    socket.on('newNotification', (notification: Notification) => {
+      setNotifications((prev) => [notification, ...prev]);
+    });
+
     return () => {
-      socket.off('hotspot:new', handleNew);
+      socket.off('newHotspot');
+      socket.off('newNotification');
     };
   }, []);
 
-  const handleTriggerCheck = async () => {
-    if (checking) return;
-    setChecking(true);
-    setCheckMsg(null);
-    try {
-      await hotspotsApi.triggerCheck();
-      setCheckMsg('检测完成，新热点将实时推送');
-      await load(page);
-    } catch (e: any) {
-      setCheckMsg(e.message || '检测失败');
-    } finally {
-      setChecking(false);
-      setTimeout(() => setCheckMsg(null), 4000);
-    }
-  };
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   return (
-    <div>
-      {/* 统计概览 */}
-      {stats && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <StatCard
-            label="总热点"
-            value={stats.total}
-            icon={<Activity className="w-4 h-4" />}
-            color="text-blue-600"
-            bg="bg-blue-50"
-          />
-          <StatCard
-            label="今日新增"
-            value={stats.today}
-            icon={<TrendingUp className="w-4 h-4" />}
-            color="text-emerald-600"
-            bg="bg-emerald-50"
-          />
-          <StatCard
-            label="高重要性"
-            value={stats.high}
-            icon={<AlertTriangle className="w-4 h-4" />}
-            color="text-amber-600"
-            bg="bg-amber-50"
-          />
-          <StatCard
-            label="活跃信源"
-            value={Object.keys(stats.bySource).length}
-            icon={<Radio className="w-4 h-4" />}
-            color="text-indigo-600"
-            bg="bg-indigo-50"
-          />
+    <div className="space-y-8">
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">热点监控</h1>
+          <p className="text-text-secondary text-sm mt-1">实时追踪全球金融市场重要事件</p>
         </div>
-      )}
-
-      {/* 筛选 + 操作 */}
-      <div className="flex items-center justify-between mb-4">
-        <FilterBar
-          source={source}
-          importance={importance}
-          onSourceChange={setSource}
-          onImportanceChange={setImportance}
-        />
         <button
-          onClick={handleTriggerCheck}
-          disabled={checking}
-          className="px-3 py-1.5 text-sm text-slate-500 hover:text-primary hover:bg-blue-50 rounded-lg transition-colors duration-200 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => setShowNotificationPanel(!showNotificationPanel)}
+          className="relative p-2.5 rounded-xl bg-bg-surface border border-border hover:border-border-hover transition-all duration-200"
         >
-          <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
-          {checking ? '检测中...' : '手动检测'}
+          <Bell className="w-5 h-5 text-text-secondary" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-gradient-to-br from-accent-pink to-accent-orange text-white text-[10px] font-bold flex items-center justify-center">
+              {unreadCount}
+            </span>
+          )}
         </button>
-        {checkMsg && (
-          <span className={`text-xs ml-2 ${checkMsg.includes('失败') ? 'text-red-500' : 'text-emerald-600'}`}>
-            {checkMsg}
-          </span>
-        )}
       </div>
 
-      {/* 热点列表 */}
+      {/* Stats cards */}
+      <div className="grid grid-cols-4 gap-4 stagger-children">
+        <StatCard
+          label="热点总数"
+          value={stats.totalHotspots}
+          icon={Activity}
+          iconBg="bg-accent-purple/10"
+          iconColor="text-accent-purple"
+          accentColor="from-accent-purple/20"
+        />
+        <StatCard
+          label="今日新增"
+          value={stats.newToday}
+          icon={Zap}
+          iconBg="bg-accent-pink/10"
+          iconColor="text-accent-pink"
+          accentColor="from-accent-pink/20"
+        />
+        <StatCard
+          label="高相关度"
+          value={stats.highRelevance}
+          icon={TrendingUp}
+          iconBg="bg-accent-orange/10"
+          iconColor="text-accent-orange"
+          accentColor="from-accent-orange/20"
+        />
+        <StatCard
+          label="活跃信源"
+          value={stats.sourcesActive}
+          icon={Shield}
+          iconBg="bg-emerald-500/10"
+          iconColor="text-emerald-500"
+          accentColor="from-emerald-500/20"
+        />
+      </div>
+
+      {/* Filter bar */}
+      <FilterBar filter={filter} onFilterChange={setFilter} />
+
+      {/* Hotspots list */}
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse">
-              <div className="flex gap-2 mb-2">
-                <div className="h-5 w-16 bg-slate-100 rounded" />
-                <div className="h-5 w-12 bg-slate-100 rounded" />
-              </div>
-              <div className="h-4 w-3/4 bg-slate-100 rounded mb-2" />
-              <div className="h-3 w-1/2 bg-slate-50 rounded" />
-            </div>
+            <div key={i} className="bg-bg-surface border border-border rounded-xl p-5 h-32 shimmer rounded-xl" />
           ))}
         </div>
       ) : hotspots.length === 0 ? (
-        <div className="text-center py-16">
-          <Activity className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">暂无热点</p>
-          <p className="text-slate-300 text-xs mt-1">添加关键词后开始监控</p>
+        <div className="text-center py-20">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-bg-surface border border-border mb-4 animate-float">
+            <Activity className="w-8 h-8 text-text-muted" />
+          </div>
+          <p className="text-text-secondary text-base font-medium">暂无热点数据</p>
+          <p className="text-text-muted text-sm mt-1">系统正在持续监控中，新热点将自动推送</p>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {hotspots.map((h) => (
-            <HotspotCard key={h.id} hotspot={h} onNew={newIds.has(h.id)} />
+        <div className="space-y-3">
+          {hotspots.map((hotspot) => (
+            <HotspotCard
+              key={hotspot.id}
+              hotspot={hotspot}
+              isNew={newHotspotIds.has(hotspot.id)}
+            />
           ))}
         </div>
       )}
 
-      {/* 分页 */}
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-1.5 mt-6">
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`w-8 h-8 text-sm rounded-lg transition-colors duration-200 cursor-pointer ${
-                p === page
-                  ? 'bg-primary text-white font-medium'
-                  : 'text-slate-500 hover:bg-slate-100'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
+      {/* Notification panel */}
+      {showNotificationPanel && (
+        <NotificationPanel
+          notifications={notifications}
+          onClose={() => setShowNotificationPanel(false)}
+          onMarkAllRead={async () => {
+            await Promise.all(
+              notifications.filter((n) => !n.isRead).map((n) => notificationsApi.markRead(n.id))
+            );
+            setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+          }}
+        />
       )}
     </div>
   );
 }
 
 function StatCard({
-  label, value, icon, color, bg,
+  label,
+  value,
+  icon: Icon,
+  iconBg,
+  iconColor,
+  accentColor,
 }: {
-  label: string; value: number; icon: React.ReactNode; color: string; bg: string;
+  label: string;
+  value: number;
+  icon: React.ComponentType<{ className?: string }>;
+  iconBg: string;
+  iconColor: string;
+  accentColor: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 px-4 py-3.5">
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className={`${color} ${bg} p-1.5 rounded-lg`}>{icon}</span>
-        <span className="text-xs text-slate-400 font-medium">{label}</span>
+    <div className="bg-bg-surface border border-border rounded-2xl p-5 relative overflow-hidden group hover:border-border-hover hover:-translate-y-0.5 transition-all duration-300">
+      {/* Top gradient line */}
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent-purple/30 to-transparent opacity-60" />
+
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-text-secondary text-xs font-medium uppercase tracking-wider">{label}</span>
+        <div className={`p-2 rounded-lg ${iconBg}`}>
+          <Icon className={`w-4 h-4 ${iconColor}`} />
+        </div>
       </div>
-      <p className={`text-2xl font-bold tabular-nums ${color}`}>{value}</p>
+
+      <p className="text-3xl font-bold text-text-primary font-mono tabular-nums tracking-tight">
+        {value}
+      </p>
+
+      {/* Bottom hover glow */}
+      <div className={`absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent ${accentColor} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+    </div>
+  );
+}
+
+function NotificationPanel({
+  notifications,
+  onClose,
+  onMarkAllRead,
+}: {
+  notifications: Notification[];
+  onClose: () => void;
+  onMarkAllRead: () => void;
+}) {
+  return (
+    <div className="fixed right-6 top-20 w-96 max-h-[70vh] bg-bg-elevated border border-border rounded-2xl shadow-2xl shadow-black/40 z-50 overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-border">
+        <h3 className="text-text-primary font-semibold text-sm">通知中心</h3>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onMarkAllRead}
+            className="text-xs text-accent-purple hover:text-accent-pink transition-colors"
+          >
+            全部已读
+          </button>
+          <button onClick={onClose} className="text-text-muted hover:text-text-secondary transition-colors">
+            ✕
+          </button>
+        </div>
+      </div>
+      <div className="overflow-y-auto max-h-[60vh]">
+        {notifications.length === 0 ? (
+          <div className="p-8 text-center">
+            <Bell className="w-8 h-8 text-text-muted mx-auto mb-3" />
+            <p className="text-text-muted text-sm">暂无通知</p>
+          </div>
+        ) : (
+          notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`p-4 border-b border-border hover:bg-bg-surface transition-colors ${
+                !notification.isRead ? 'bg-bg-surface/30' : ''
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                  notification.type === 'HIGH_RELEVANCE' ? 'bg-high' :
+                  notification.type === 'SUBSTANTIAL_EVENT' ? 'bg-medium' :
+                  'bg-accent-purple'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-text-primary text-sm font-medium">{notification.title}</p>
+                  <p className="text-text-secondary text-xs mt-1">{notification.content || ''}</p>
+                  <p className="text-text-muted text-[10px] mt-1.5">
+                    {new Date(notification.createdAt).toLocaleString('zh-CN')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

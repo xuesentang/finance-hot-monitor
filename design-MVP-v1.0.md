@@ -1,7 +1,9 @@
 # 金融热点监控工具 — 技术实现方案 v1.0
 
-> 基于 [PRD-MVP-v2.0](./PRD-MVP-v2.0.md) 和 [信息筛选机制设计 v4](./信息筛选机制设计（4）.md)。
+> 基于 [PRD-MVP](./PRD-MVP.md) 和 [信息筛选机制设计 v4](./信息筛选机制设计（4）.md)。
 > 本文档定义 MVP 第一期的完整技术实现方案，不涉及编码细节。
+>
+> **搜索功能状态**：搜索功能曾实现（代码仍在 `SearchPage.tsx`、`SearchResultCard.tsx`、`search.ts` 等文件中），但因效果不佳已阶段性放弃。前端入口已封禁（import/路由/API/类型定义均已注释隔离），后端路由也已注释。用户界面仅保留监控功能（热点+关键词）。后续如需恢复，取消注释即可。
 
 ---
 
@@ -12,6 +14,7 @@ D:\finance-hot-monitor\
 ├── server/                    # Node.js 后端（复用 yupi-hot-monitor 骨架）
 │   ├── package.json
 │   ├── tsconfig.json
+│   ├── vitest.config.ts       # 测试配置
 │   ├── prisma/
 │   │   └── schema.prisma      # 数据模型（重写）
 │   └── src/
@@ -21,14 +24,20 @@ D:\finance-hot-monitor\
 │       ├── routes/
 │       │   ├── keywords.ts     # 关键词 CRUD
 │       │   ├── hotspots.ts     # 热点查询、筛选
-│       │   └── notifications.ts# 通知查询
+│       │   ├── notifications.ts# 通知查询
+│       │   └── search.ts       # [已隔离] 搜索路由，import 已注释
 │       ├── services/
 │       │   ├── ai.ts           # DeepSeek API 调用（重写）
-│       │   └── collector.ts    # 调用 Python 采集脚本
+│       │   ├── collector.ts    # 调用 Python 采集脚本
+│       │   └── search.ts       # [已隔离] 搜索服务，import 已注释
 │       ├── jobs/
 │       │   └── hotspotChecker.ts # 定时任务：采集→筛选→入库→推送
+│       ├── config/
+│       │   ├── sources.ts      # 信源配置
+│       │   └── stockCodes.ts   # 股票代码映射
 │       └── utils/
-│           └── filter.ts       # 阈值过滤规则
+│           ├── filter.ts       # 阈值过滤规则
+│           └── sortHotspots.ts # 热点排序
 │
 ├── client/                    # React 前端（复用 yupi-hot-monitor 骨架）
 │   ├── package.json
@@ -36,18 +45,20 @@ D:\finance-hot-monitor\
 │   ├── index.html
 │   └── src/
 │       ├── main.tsx
-│       ├── App.tsx             # 路由配置
+│       ├── App.tsx             # 路由配置（仅 hotspots + keywords）
 │       ├── pages/
 │       │   ├── KeywordsPage.tsx  # 关键词管理
-│       │   └── HotspotsPage.tsx  # 热点列表
+│       │   ├── HotspotsPage.tsx  # 热点列表
+│       │   └── SearchPage.tsx    # [已隔离] 搜索页面，import 已注释
 │       ├── components/
 │       │   ├── HotspotCard.tsx   # 热点详情卡片
-│       │   └── FilterBar.tsx     # 筛选条件栏
+│       │   ├── FilterBar.tsx     # 筛选条件栏
+│       │   └── SearchResultCard.tsx # [已隔离] 搜索结果卡片，import 已注释
 │       ├── services/
-│       │   ├── api.ts           # REST API 调用
+│       │   ├── api.ts           # REST API 调用（searchApi 已注释隔离）
 │       │   └── socket.ts        # WebSocket 客户端
 │       └── types/
-│           └── index.ts
+│           └── index.ts         # 类型定义（搜索相关类型已注释隔离）
 │
 ├── scripts/                   # Python 数据采集脚本
 │   ├── requirements.txt
@@ -68,7 +79,7 @@ D:\finance-hot-monitor\
 ├── data/                      # 运行时数据（gitignore）
 │   └── company_tickers.json   # SEC ticker→CIK 映射缓存（自动拉取）
 │
-├── PRD-MVP-v2.0.md
+├── PRD-MVP.md
 ├── 信息筛选机制设计（4）.md
 ├── design-MVP-v1.0.md         # 本文件
 └── SESSION_STATE.md
@@ -93,8 +104,15 @@ D:\finance-hot-monitor\
 |------|------|------|
 | 框架 | React 19 + TypeScript | 继承 yupi-hot-monitor |
 | 构建 | Vite 5 | 继承 |
-| 样式 | Tailwind CSS | 继承 |
-| UI 风格 | 简洁金融工具风 | 替换原赛博朋克风 |
+| 样式 | Tailwind CSS v4 | 继承 |
+| UI 风格 | **暗色金融科技风**（Dark Fintech） | 参考 Borea AI + Krypcore Dashboard 重新设计 |
+
+**设计特征**：
+- 深色基底 `#0B0E14` + 紫→粉→橙渐变强调色体系
+- 左侧深色侧边栏导航（参考 Krypcore Dashboard）
+- 字体：Space Grotesk（标题）+ DM Sans（正文）+ JetBrains Mono（数字）
+- 玻璃拟态卡片：半透明深色底 + 渐变顶部线 + hover 发光效果
+- 丰富的微动效：stagger 入场、slideIn 新热点、hover 上浮、glow、float 空状态、shimmer 加载
 
 ### 数据采集
 | 组件 | 选型 | 说明 |
@@ -524,6 +542,7 @@ const SOURCE_AUTHORITY: Record<string, number> = {
 | PATCH | `/api/notifications/:id` | 标记通知已读 | `{ isRead: true }` |
 | GET | `/api/health` | 健康检查 | 无 |
 | POST | `/api/check-hotspots` | 手动触发热点检查 | 无 |
+| GET | `/api/goto` | 代理跳转（绕过目标 WAF） | `?url=<encoded_url>` |
 
 ### 7.2 WebSocket 事件
 
@@ -553,8 +572,10 @@ const SOURCE_AUTHORITY: Record<string, number> = {
 | 路径 | 页面 | 说明 |
 |------|------|------|
 | `/` | 重定向到 `/hotspots` | — |
-| `/keywords` | KeywordsPage | 关键词管理 |
 | `/hotspots` | HotspotsPage | 热点列表（默认首页） |
+| `/keywords` | KeywordsPage | 关键词管理 |
+
+> **搜索功能**：搜索页面 `SearchPage` 的路由、import、API 均已注释隔离，用户界面不可见。代码保留在仓库中，后续如需恢复取消注释即可。
 
 ### 8.2 关键词管理页（KeywordsPage）
 
@@ -598,6 +619,8 @@ DEEPSEEK_API_KEY="sk-xxx"
 FRED_API_KEY="xxx"
 CLIENT_URL="http://localhost:5173"
 PORT=3001
+HTTPS_PROXY=http://127.0.0.1:7890
+HTTP_PROXY=http://127.0.0.1:7890
 ```
 
 ### 9.2 信源配置（`server/src/config/sources.ts`）
@@ -646,5 +669,5 @@ export const SOURCE_CONFIG = {
 
 ---
 
-> **文档状态**：初稿完成
-> **下一步**：用户确认方案后，按实现顺序开始编码。
+> **文档状态**：已更新，反映项目当前实际状态（搜索功能已隔离封禁）
+> **下一步**：专注监控功能优化与测试。

@@ -8,13 +8,14 @@ datasource db {
 }
 
 model Keyword {
-  id        String    @id @default(uuid())
-  text      String    @unique
-  type      String    @default("generic")
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  hotspots  Hotspot[]
+  id             String    @id @default(uuid())
+  text           String    @unique
+  type           String    @default("generic")
+  isActive       Boolean   @default(true)
+  searchStrategy String?   // AI 生成的搜索策略 JSON (searchTerms + targetSources)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  hotspots       Hotspot[]
 }
 
 model Hotspot {

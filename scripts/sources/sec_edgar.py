@@ -59,34 +59,45 @@ PROXY_URL = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
 PROXIES = {"https": PROXY_URL, "http": PROXY_URL} if PROXY_URL else None
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def _date_range_start(date_range: str) -> str:
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if date_range == "7d":
+        return (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    elif date_range == "30d":
+        return (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    elif date_range == "90d":
+        return (now - timedelta(days=90)).strftime("%Y-%m-%d")
+    else:
+        return (now - timedelta(days=365)).strftime("%Y-%m-%d")
+
+
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集 SEC EDGAR 公告。
 
     Args:
         keywords: 用户关键词（如 ["AAPL", "MSFT"]）
         watermark: {"extraData": {"0000320193": {"lastFilingDate": "2025-05-20"}}}
+        mode: "monitor"=监控模式(水位线增量), "search"=搜索模式(指定时间范围)
+        date_range: 搜索时间范围 (仅 search 模式生效)
 
     Returns:
         (items, new_watermark)
     """
-    # Step 1: 加载 ticker→CIK 映射
     ticker_map = load_ticker_map()
 
-    # Step 2: 过滤出美股代码
     stock_codes = []
     for kw in keywords:
         upper = kw.strip().upper()
-        # 美股 ticker 是纯英文 1-5 个字母
         if upper.isalpha() and 1 <= len(upper) <= 5:
             stock_codes.append(upper)
 
     if not stock_codes:
         return [], watermark
 
-    # Step 3: 拉取每个 CIK 的 submissions
     extra_data = watermark.get("extraData", {}) if watermark else {}
-    new_extra_data = dict(extra_data)  # 复制一份用于更新
+    new_extra_data = dict(extra_data)
     all_items = []
 
     session = requests.Session()
@@ -102,15 +113,18 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
         prev = extra_data.get(cik_padded, {})
 
         try:
-            items, new_prev = fetch_submissions(
-                session, cik_padded, ticker, prev
-            )
+            if mode == "search":
+                items, new_prev = fetch_submissions(
+                    session, cik_padded, ticker, prev, mode="search", date_range=date_range
+                )
+            else:
+                items, new_prev = fetch_submissions(session, cik_padded, ticker, prev)
             all_items.extend(items)
             new_extra_data[cik_padded] = new_prev
-            time.sleep(0.15)  # SEC 要求 ≤10 req/s
+            time.sleep(0.15)
         except Exception as e:
             print(f"  SEC EDGAR: {ticker} ({cik_padded}) failed - {e}", file=sys.stderr)
-            new_extra_data[cik_padded] = prev  # 保留旧水位线
+            new_extra_data[cik_padded] = prev
 
     new_watermark: dict = {"extraData": new_extra_data}
     return all_items, new_watermark
@@ -143,6 +157,8 @@ def fetch_submissions(
     cik_padded: str,
     ticker: str,
     prev: dict,
+    mode: str = "monitor",
+    date_range: str = "30d",
 ) -> tuple[list[dict], dict]:
     """
     拉取单个 CIK 的 submissions，返回新文件和水位线。
@@ -152,6 +168,8 @@ def fetch_submissions(
         cik_padded: 10 位零填充 CIK
         ticker: 原始 ticker 代码
         prev: 该 CIK 上一次的水位线 {"lastFilingDate": "2025-05-20"}
+        mode: "monitor" 或 "search"
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_prev)
@@ -163,10 +181,12 @@ def fetch_submissions(
 
     from datetime import datetime, timedelta
 
-    last_filing_date = prev.get("lastFilingDate", "")
-    if not last_filing_date:
-        # 首次运行：只取最近 7 天
-        last_filing_date = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+    if mode == "search":
+        last_filing_date = _date_range_start(date_range)
+    else:
+        last_filing_date = prev.get("lastFilingDate", "")
+        if not last_filing_date:
+            last_filing_date = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
 
     latest_date = last_filing_date
 
@@ -182,20 +202,18 @@ def fetch_submissions(
     descriptions = filings.get("primaryDocDescription", [])
 
     items = []
+    search_limit = 50
     for i in range(len(forms)):
         form = forms[i] if i < len(forms) else ""
         filing_date = dates[i] if i < len(dates) else ""
         acc_num = acc_numbers[i] if i < len(acc_numbers) else ""
 
-        # 已处理过的跳过
         if filing_date <= last_filing_date:
             continue
 
-        # 更新最新日期
         if filing_date > latest_date:
             latest_date = filing_date
 
-        # 只看我们关注的文件类型
         if form not in FILING_TYPES:
             continue
 
@@ -224,7 +242,7 @@ def fetch_submissions(
                 f"Description: {desc}\n"
                 f"Accession: {acc_num}"
             ),
-            "url": doc_url,
+            "url": filing_url,
             "source": "sec_edgar",
             "sourceType": "announcement",
             "publishedAt": f"{filing_date}T00:00:00Z",
@@ -237,8 +255,13 @@ def fetch_submissions(
             },
         })
 
-    # SEC 返回按时间倒序，latest_date 已在第一项获取正确
-    items.reverse()  # 按时间正序
+        if mode == "search" and len(items) >= search_limit:
+            break
+
+    items.reverse()
+
+    if mode == "search":
+        return items, prev
 
     new_prev = {"lastFilingDate": latest_date} if latest_date else prev
     return items, new_prev

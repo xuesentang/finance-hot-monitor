@@ -19,13 +19,29 @@ import requests
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def _date_range_cutoff(date_range: str) -> int:
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    if date_range == "7d":
+        cutoff = now - timedelta(days=7)
+    elif date_range == "30d":
+        cutoff = now - timedelta(days=30)
+    elif date_range == "90d":
+        cutoff = now - timedelta(days=90)
+    else:
+        cutoff = now - timedelta(days=365)
+    return int(cutoff.timestamp())
+
+
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集东财全球资讯。
 
     Args:
         keywords: 未使用（全量拉取）
         watermark: {"lastTimestamp": 1768900000}
+        mode: "monitor"=监控模式, "search"=搜索模式
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_watermark)
@@ -54,6 +70,8 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
     if not news_list:
         return [], watermark
 
+    cutoff_ts = _date_range_cutoff(date_range) if mode == "search" else 0
+
     new_last_ts = last_ts
     items = []
     tz_cn = timezone(timedelta(hours=8))
@@ -61,20 +79,22 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
     for item in news_list:
         title = item.get("title", "")
         summary = item.get("summary", "") or ""
-        show_time = item.get("showTime", "")  # e.g. "2026-05-24 16:30:00"
+        show_time = item.get("showTime", "")
 
         if not title:
             continue
 
-        # 解析时间
         try:
             dt = datetime.strptime(show_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_cn)
         except ValueError:
-            dt = datetime.now(tz=tz_cn)
+            continue
 
         ts = int(dt.timestamp())
 
-        if ts <= last_ts:
+        if mode == "monitor" and ts <= last_ts:
+            continue
+
+        if mode == "search" and ts < cutoff_ts:
             continue
 
         if ts > new_last_ts:
@@ -84,7 +104,6 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
 
         full_text = f"{title}\n\n{summary}".strip() if summary else title
 
-        # 构造 URL
         news_id = item.get("code", "") or item.get("id", "")
         url_str = (
             f"https://finance.eastmoney.com/a/{news_id}.html"
@@ -106,4 +125,6 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
         })
 
     new_watermark: dict = {"lastTimestamp": new_last_ts}
+    if mode == "search":
+        return items, watermark
     return items, new_watermark

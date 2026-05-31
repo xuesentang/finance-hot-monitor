@@ -65,6 +65,14 @@ export interface Stats {
   bySource: Record<string, number>;
 }
 
+export interface HotspotFilter {
+  sources?: string[];
+  importance?: 'high' | 'medium' | 'low';
+  isSubstantial?: boolean;
+  keywordId?: string;
+  sortBy?: 'createdAt' | 'relevance' | 'publishedAt';
+}
+
 export const SOURCE_LABELS: Record<SourceName, string> = {
   sec_edgar: 'SEC EDGAR',
   juchao: '巨潮资讯',
@@ -79,3 +87,42 @@ export const IMPORTANCE_COLORS: Record<string, string> = {
   medium: 'text-amber-600 bg-amber-50 border-amber-200',
   low: 'text-gray-500 bg-gray-50 border-gray-200',
 };
+
+// 搜索功能已阶段性放弃，类型定义已隔离；后续删除搜索时清理此行
+// export interface SearchParams {
+//   query: string;
+//   sources?: SourceName[];
+//   dateRange?: '7d' | '30d' | '90d' | 'all';
+//   limit?: number;
+// }
+//
+// export interface SearchResultItem {
+//   title: string;
+//   content: string;
+//   url: string;
+//   source: SourceName;
+//   sourceType: SourceType;
+//   publishedAt: string | null;
+//   aiAnalysis: {
+//     eventType: string;
+//     isSubstantial: boolean;
+//     relevance: number;
+//     relevanceReason: string;
+//     keywordMentioned: boolean;
+//     importance: Importance;
+//     importanceReason: string;
+//     summary: string;
+//     affectedHoldings: boolean;
+//     eventFingerprint: string;
+//   } | null;
+//   matchedTerms: string[];
+// }
+//
+// export interface SearchResponse {
+//   query: string;
+//   totalResults: number;
+//   searchTimeMs: number;
+//   items: SearchResultItem[];
+//   expandedKeywords: string[];
+//   sourceStats: Record<string, number>;
+// }

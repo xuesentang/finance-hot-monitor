@@ -14,7 +14,22 @@ import requests
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def _date_range_cutoff(date_range: str) -> int:
+    from datetime import datetime, timezone, timedelta
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    if date_range == "7d":
+        cutoff = now - timedelta(days=7)
+    elif date_range == "30d":
+        cutoff = now - timedelta(days=30)
+    elif date_range == "90d":
+        cutoff = now - timedelta(days=90)
+    else:
+        cutoff = now - timedelta(days=365)
+    return int(cutoff.timestamp())
+
+
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集财联社电报。
 
@@ -23,6 +38,8 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
     Args:
         keywords: 未使用（留接口统一）
         watermark: {"lastTimestamp": 1768900000}
+        mode: "monitor"=监控模式, "search"=搜索模式
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_watermark)
@@ -44,6 +61,8 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
     if not roll_data:
         return [], watermark
 
+    cutoff_ts = _date_range_cutoff(date_range) if mode == "search" else 0
+
     new_last_ts = last_ts
     items = []
 
@@ -53,20 +72,20 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
         content = item.get("content", "") or item.get("brief", "")
         brief = item.get("brief", "")
 
-        # 已处理过的跳过
-        if ctime <= last_ts:
+        if mode == "monitor" and ctime <= last_ts:
+            continue
+
+        if mode == "search" and ctime < cutoff_ts:
             continue
 
         if ctime > new_last_ts:
             new_last_ts = ctime
 
-        # 时间戳转 ISO
         from datetime import datetime, timezone, timedelta
         tz_cn = timezone(timedelta(hours=8))
         dt = datetime.fromtimestamp(ctime, tz=tz_cn)
         published_at = dt.isoformat()
 
-        # 合并 content 和 brief
         full_text = f"{title}\n\n{brief}\n\n{content}".strip()
 
         items.append({
@@ -83,4 +102,6 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
         })
 
     new_watermark: dict = {"lastTimestamp": new_last_ts}
+    if mode == "search":
+        return items, watermark
     return items, new_watermark

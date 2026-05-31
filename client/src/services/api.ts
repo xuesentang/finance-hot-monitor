@@ -4,8 +4,11 @@ const BASE = '/api';
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
   });
 
   if (!res.ok) {
@@ -62,3 +65,12 @@ export const notificationsApi = {
       body: JSON.stringify({ isRead: true }),
     }),
 };
+
+// 搜索功能已阶段性放弃，API 入口已隔离；后续删除搜索时清理此行
+// export const searchApi = {
+//   search: (params: SearchParams) =>
+//     request<SearchResponse>('/search', {
+//       method: 'POST',
+//       body: JSON.stringify(params),
+//     }),
+// };

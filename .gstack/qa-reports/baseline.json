@@ -1,0 +1,41 @@
+{
+  "date": "2026-05-25",
+  "url": "http://localhost:5173",
+  "healthScore": 96.0,
+  "issues": [
+    {
+      "id": "ISSUE-001",
+      "title": "App.tsx 函数名与导出名不匹配导致页面白屏",
+      "severity": "critical",
+      "category": "functional",
+      "status": "verified",
+      "commit": "b606364"
+    },
+    {
+      "id": "ISSUE-002",
+      "title": "手动检测按钮缺少加载/成功反馈",
+      "severity": "low",
+      "category": "ux",
+      "status": "verified",
+      "commit": "5be7e11"
+    },
+    {
+      "id": "ISSUE-003",
+      "title": "图标按钮缺少 aria-label",
+      "severity": "low",
+      "category": "accessibility",
+      "status": "verified",
+      "commit": "5be7e11"
+    }
+  ],
+  "categoryScores": {
+    "console": 90,
+    "links": 100,
+    "visual": 100,
+    "functional": 100,
+    "ux": 95,
+    "performance": 90,
+    "content": 100,
+    "accessibility": 95
+  }
+}

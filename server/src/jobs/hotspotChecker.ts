@@ -1,14 +1,15 @@
 import type { Server } from 'socket.io';
 import { prisma } from '../db.js';
-import { expandKeyword, preMatchKeyword, analyzeContent } from '../services/ai.js';
+import { expandKeyword, searchStrategy, preMatchKeyword, analyzeContent, normalizeSourceNames } from '../services/ai.js';
 import { collectFromSource } from '../services/collector.js';
 import { shouldFilter } from '../utils/filter.js';
 import { SOURCE_AUTHORITY } from '../config/sources.js';
-import type { RawContent, SourceName } from '../types.js';
+import { A_STOCK_CODE_MAP, ensureStockCodes } from '../config/stockCodes.js';
+import type { RawContent, SourceName, Watermark } from '../types.js';
 
-// 每关键词每轮次每个信源最多 5 条 AI 分析，总额 30 条
-const MAX_PER_SOURCE = 5;
-const MAX_TOTAL = 30;
+// 每关键词每轮次每个信源最多 10 条 AI 分析，总额 50 条
+const MAX_PER_SOURCE = 10;
+const MAX_TOTAL = 50;
 
 // 防重复推送：30 分钟内相同 eventFingerprint 不重复推送
 const recentlyPushed = new Map<string, number>();
@@ -39,7 +40,7 @@ async function loadWatermark(source: SourceName): Promise<Record<string, unknown
  */
 async function saveWatermark(
   source: SourceName,
-  watermark: Record<string, unknown>
+  watermark: Record<string, unknown> | Watermark
 ): Promise<void> {
   const data: {
     lastId?: string | null;
@@ -82,23 +83,77 @@ async function checkSources(
     console.log(`\n📎 Checking keyword: "${keyword.text}"`);
 
     try {
-      // 第2层：Query Expansion
+      // 搜索策略：A股快车道优先，否则读取/生成AI策略
+      let strategy: { searchTerms: string[]; targetSources: string[] } | null = null;
+
+      // A 股快车道：关键词在硬编码映射表中 → 跳过 AI，直接用代码搜巨潮
+      if (A_STOCK_CODE_MAP[keyword.text]) {
+        strategy = {
+          searchTerms: [A_STOCK_CODE_MAP[keyword.text]],
+          targetSources: ['juchao'],
+        };
+        console.log(`  🚀 A-stock fast lane: "${keyword.text}" → ${strategy.searchTerms[0]} → juchao`);
+      } else if (keyword.searchStrategy) {
+        try {
+          const parsed = JSON.parse(keyword.searchStrategy);
+          if (parsed.searchTerms?.length) {
+            // normalize 纠正旧策略中的错误信源名
+            parsed.targetSources = normalizeSourceNames(parsed.targetSources || []);
+            strategy = parsed;
+          }
+        } catch { /* ignore malformed JSON */ }
+      }
+
+      if (!strategy || !strategy.searchTerms?.length) {
+        const result = await searchStrategy(keyword.text);
+        strategy = { searchTerms: result.searchTerms, targetSources: result.targetSources };
+        await prisma.keyword.update({
+          where: { id: keyword.id },
+          data: { searchStrategy: JSON.stringify(strategy) },
+        });
+        console.log(`  🧠 Strategy cached: [${strategy.searchTerms.join(', ')}] → [${strategy.targetSources.join(', ')}]`);
+      }
+
+      // 策略检索词 → 传给采集脚本；快讯源用空（全量拉取）
+      let collectorKw = strategy.searchTerms.length > 0
+        ? strategy.searchTerms
+        : [keyword.text];
+
+      // 硬编码兜底：确保公司名有对应股票代码
+      collectorKw = ensureStockCodes(keyword.text, collectorKw);
+
+      // 策略推荐信源 → 与调度层传入的 sources 取交集
+      let strategySources = strategy.targetSources.length > 0
+        ? sources.filter(s => strategy.targetSources.includes(s))
+        : sources;
+
+      // 硬编码兜底：A 股公司关键词强制加入 juchao
+      if (A_STOCK_CODE_MAP[keyword.text] && !strategySources.includes('juchao')) {
+        strategySources = [...new Set([...strategySources, 'juchao' as SourceName])];
+      }
+
+      if (strategySources.length === 0) {
+        console.log(`  ⏭ No matching sources for strategy`);
+        continue;
+      }
+
+      // 第2层：Query Expansion（仍用于 Node 层预匹配）
       const expandedKeywords = await expandKeyword(keyword.text);
 
       // 第0-1层：从各信源采集数据
       const allItems: RawContent[] = [];
 
-      for (const source of sources) {
+      for (const source of strategySources) {
         try {
           // 读取水位线
           const watermark = await loadWatermark(source);
 
-          // 快讯源不传关键词（全量拉取），其他源传关键词
+          // 快讯源不传关键词（全量拉取），其他源传策略关键词
           const isFastSource = source === 'cailianshe' || source === 'eastmoney';
-          const collectorKw = isFastSource ? [] : [keyword.text];
+          const sourceKw = isFastSource ? [] : collectorKw;
 
           // 调用 Python 采集
-          const result = await collectFromSource(source, collectorKw, watermark);
+          const result = await collectFromSource(source, sourceKw, watermark);
 
           // 写回水位线
           await saveWatermark(source, result.watermark);

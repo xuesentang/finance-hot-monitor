@@ -41,13 +41,31 @@ ROUTINE_BLACKLIST = [
 ]
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def _date_range_to_se_date(date_range: str) -> str:
+    from datetime import datetime, timedelta, timezone
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    end = now.strftime("%Y-%m-%d")
+    if date_range == "7d":
+        start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    elif date_range == "30d":
+        start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    elif date_range == "90d":
+        start = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+    else:
+        start = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+    return f"{start}~{end}"
+
+
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集巨潮公告。
 
     Args:
         keywords: 用户关键词（如 ["000002", "万科", "600036"]）
         watermark: {"extraData": {"000002": {"lastId": "...", "lastDate": "..."}}}
+        mode: "monitor"=监控模式, "search"=搜索模式
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_watermark)
@@ -58,21 +76,118 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
 
     for kw in keywords:
         code = _extract_stock_code(kw)
-        if not code:
-            continue
-
-        prev = extra_data.get(code, {"lastId": "", "lastDate": ""})
         try:
-            items, new_prev = fetch_announcements(code, prev)
-            all_items.extend(items)
-            new_extra_data[code] = new_prev
-            time.sleep(1)  # 礼貌间隔
+            if code:
+                prev = extra_data.get(code, {"lastId": "", "lastDate": ""})
+                if mode == "search":
+                    items, new_prev = fetch_announcements(code, prev, mode="search", date_range=date_range)
+                else:
+                    items, new_prev = fetch_announcements(code, prev)
+                all_items.extend(items)
+                new_extra_data[code] = new_prev
+            else:
+                # 非代码关键词 → 全文搜索
+                items = search_by_keyword(kw, date_range if mode == "search" else "30d")
+                all_items.extend(items)
+            time.sleep(1)
         except Exception as e:
-            print(f"  巨潮: {code} failed - {e}", file=sys.stderr)
-            new_extra_data[code] = prev
+            print(f"  巨潮: '{kw}' failed - {e}", file=sys.stderr)
+            if code:
+                new_extra_data[code] = extra_data.get(code, {"lastId": "", "lastDate": ""})
 
     new_watermark: dict = {"extraData": new_extra_data}
     return all_items, new_watermark
+
+
+def search_by_keyword(keyword: str, date_range: str = "30d") -> list[dict]:
+    """
+    用关键词在巨潮做全文搜索（不使用股票代码）。
+    使用 searchkey 参数匹配公司名。
+    """
+    import urllib3
+    urllib3.disable_warnings()
+
+    payload = {
+        "stock": "",
+        "tabName": "fulltext",
+        "pageSize": "30",
+        "pageNum": "1",
+        "column": "",
+        "category": "",
+        "plate": "",
+        "seDate": _date_range_to_se_date(date_range),
+        "searchkey": keyword,
+        "secid": "",
+        "sortName": "",
+        "sortType": "",
+        "isHLtitle": "true",
+    }
+
+    headers = {
+        "User-Agent": UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://www.cninfo.com.cn/new/disclosure",
+        "Origin": "https://www.cninfo.com.cn",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+
+    session = requests.Session()
+    session.trust_env = False
+    resp = session.post(
+        "https://www.cninfo.com.cn/new/hisAnnouncement/query",
+        data=payload,
+        headers=headers,
+        verify=False,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    announcements = data.get("announcements", []) or []
+    if not announcements:
+        return []
+
+    items = []
+    for ann in announcements[:20]:
+        ann_id = ann.get("announcementId", "")
+        ann_title = ann.get("announcementTitle", "")
+        ann_type = ann.get("announcementTypeName", "")
+        ann_ts = ann.get("announcementTime", 0)
+        stock_code = ann.get("secCode", "")
+
+        if isinstance(ann_ts, (int, float)) and ann_ts > 0:
+            from datetime import datetime, timezone, timedelta
+            tz_cn = timezone(timedelta(hours=8))
+            ann_dt = datetime.fromtimestamp(ann_ts / 1000, tz=tz_cn)
+            ann_date = ann_dt.isoformat()
+        else:
+            ann_date = str(ann_ts) if ann_ts else ""
+
+        ann_url = (
+            f"https://www.cninfo.com.cn/new/disclosure/detail?announcementId={ann_id}"
+            if ann_id else ""
+        )
+
+        items.append({
+            "title": f"[{stock_code}] {ann_title}" if stock_code else ann_title,
+            "content": (
+                f"Stock: {stock_code}\n"
+                f"Type: {ann_type}\n"
+                f"Title: {ann_title}"
+            ),
+            "url": ann_url,
+            "source": "juchao",
+            "sourceType": "announcement",
+            "publishedAt": ann_date if ann_date else None,
+            "extraData": {
+                "stockCode": stock_code,
+                "announcementType": ann_type,
+                "announcementId": ann_id,
+            },
+        })
+
+    return items
 
 
 def _extract_stock_code(keyword: str) -> str | None:
@@ -117,14 +232,16 @@ def _is_routine(title: str) -> bool:
 
 
 def fetch_announcements(
-    code: str, prev: dict
+    code: str, prev: dict, mode: str = "monitor", date_range: str = "30d"
 ) -> tuple[list[dict], dict]:
     """
     拉取指定股票的公告列表。
 
     Args:
         code: 6 位股票代码
-        prev: {"lastId": "..."
+        prev: {"lastId": "...", "lastDate": "..."}
+        mode: "monitor" 或 "search"
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_prev)
@@ -132,18 +249,18 @@ def fetch_announcements(
     import urllib3
     urllib3.disable_warnings()
 
-    org_id = _make_org_id(code)
-
+    # 使用 searchkey 而非 stock+orgId —— orgId 映射对科创板(688xxx)等不准确
+    # searchkey 支持股票代码全文搜索，对所有板块都有效
     payload = {
-        "stock": f"{code},{org_id}",
+        "stock": "",
         "tabName": "fulltext",
-        "pageSize": "30",
+        "pageSize": "50" if mode == "search" else "30",
         "pageNum": "1",
         "column": "",
         "category": "",
         "plate": "",
-        "seDate": "",
-        "searchkey": "",
+        "seDate": _date_range_to_se_date(date_range) if mode == "search" else "",
+        "searchkey": code,
         "secid": "",
         "sortName": "",
         "sortType": "",
@@ -187,31 +304,36 @@ def fetch_announcements(
         ann_title = item.get("announcementTitle", "")
         ann_type = item.get("announcementTypeName", "")
         ann_ts = item.get("announcementTime", 0)
-        # announcementTime 是毫秒时间戳
         if isinstance(ann_ts, (int, float)) and ann_ts > 0:
             from datetime import datetime, timezone, timedelta
             tz_cn = timezone(timedelta(hours=8))
             ann_dt = datetime.fromtimestamp(ann_ts / 1000, tz=tz_cn)
-            ann_date = ann_dt.isoformat()  # e.g. "2025-05-24T16:30:00+08:00"
+            ann_date = ann_dt.isoformat()
             ann_date_short = ann_dt.strftime("%Y-%m-%d")
         else:
             ann_date = str(ann_ts) if ann_ts else ""
             ann_date_short = ann_date[:10] if ann_date else ""
 
-        # 已处理过的跳过
-        if ann_id and ann_id <= last_id:
-            continue
-        if ann_date_short and ann_date_short <= last_date:
-            continue
+        if mode == "monitor":
+            try:
+                if ann_id and int(ann_id) <= int(last_id):
+                    continue
+            except (ValueError, TypeError):
+                if ann_id and ann_id <= last_id:
+                    continue
+            if ann_date_short and ann_date_short <= last_date:
+                continue
 
-        # 更新水位线
-        if ann_id and (not new_last_id or ann_id > new_last_id):
-            new_last_id = ann_id
+        try:
+            if ann_id and (not new_last_id or int(ann_id) > int(new_last_id)):
+                new_last_id = ann_id
+        except (ValueError, TypeError):
+            if ann_id and (not new_last_id or ann_id > new_last_id):
+                new_last_id = ann_id
         if ann_date_short and (not new_last_date or ann_date_short > new_last_date):
             new_last_date = ann_date_short
 
-        # 例行公告过滤
-        if _is_routine(ann_title):
+        if mode == "monitor" and _is_routine(ann_title):
             continue
 
         adj_id = item.get("adjunctUrl", "")
@@ -241,4 +363,6 @@ def fetch_announcements(
         })
 
     new_prev = {"lastId": new_last_id, "lastDate": new_last_date}
+    if mode == "search":
+        return items, prev
     return items, new_prev

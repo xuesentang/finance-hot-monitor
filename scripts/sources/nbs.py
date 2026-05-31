@@ -70,13 +70,15 @@ def save_json_cache(filename: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集 NBS 宏观数据（V2 API）。
 
     Args:
         keywords: 用户关键词（如 ["CPI", "GDP", "居民消费价格指数"]）
         watermark: {"extraData": {"indicator_uuid": {"lastDate": "202604", "lastValue": 99.3}}}
+        mode: "monitor"=监控模式, "search"=搜索模式
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_watermark)
@@ -85,7 +87,6 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
     new_extra_data = dict(extra_data)
     all_items = []
 
-    # 加载搜索缓存：keyword → {cid, indic_id, name}
     search_cache = load_json_cache("nbs_search_cache.json")
 
     session = requests.Session()
@@ -110,14 +111,15 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
             indicator_name = cached.get("name", kw)
             dt_type = cached.get("dt_type", "MM")
 
-            # 使用 indic_id 作为水位线 key
-            prev = extra_data.get(indic_id, {})
-            prev_date = prev.get("lastDate", "")
+            if mode == "search":
+                items, new_prev = fetch_range(session, cid, indic_id, indicator_name, kw, dt_type, date_range)
+            else:
+                prev = extra_data.get(indic_id, {})
+                prev_date = prev.get("lastDate", "")
+                item, new_prev = fetch_latest(session, cid, indic_id, indicator_name, kw, prev_date, dt_type)
+                items = [item] if item else []
 
-            # 查询最新一期数据
-            item, new_prev = fetch_latest(session, cid, indic_id, indicator_name, kw, prev_date, dt_type)
-            if item:
-                all_items.append(item)
+            all_items.extend(items)
             new_extra_data[indic_id] = new_prev
 
             time.sleep(1)
@@ -308,7 +310,7 @@ def fetch_latest(
             + (f"Previous Value: {prev_value}\n" if prev_value is not None else "")
             + (f"Change: {change_pct}%\n" if change_pct is not None else "")
         ),
-        "url": f"https://data.stats.gov.cn/easyquery.htm",
+        "url": "https://data.stats.gov.cn/",
         "source": "nbs",
         "sourceType": "macro_data",
         "publishedAt": f"{_dt_to_iso(latest_date, dt_type)}",
@@ -325,6 +327,131 @@ def fetch_latest(
 
     new_prev = {"lastDate": latest_date, "lastValue": latest_value}
     return item, new_prev
+
+
+def _date_range_to_dts(date_range: str, dt_type: str = "MM") -> str:
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    if date_range == "7d":
+        delta = timedelta(days=7)
+    elif date_range == "30d":
+        delta = timedelta(days=30)
+    elif date_range == "90d":
+        delta = timedelta(days=90)
+    else:
+        delta = timedelta(days=365)
+    start_dt = now - delta
+
+    if dt_type == "YY":
+        end_str = now.strftime("%Y")
+        start_str = start_dt.strftime("%Y")
+        return f"{start_str}YY-{end_str}YY"
+    elif dt_type == "SS":
+        quarter = (now.month - 1) // 3 + 1
+        end_str = f"{now.year}{quarter:02d}"
+        start_quarter = (start_dt.month - 1) // 3 + 1
+        start_str = f"{start_dt.year}{start_quarter:02d}"
+        return f"{start_str}SS-{end_str}SS"
+    else:
+        end_str = now.strftime("%Y%m")
+        start_str = start_dt.strftime("%Y%m")
+        return f"{start_str}MM-{end_str}MM"
+
+
+def fetch_range(
+    session: requests.Session,
+    cid: str,
+    indic_id: str,
+    indicator_name: str,
+    keyword: str,
+    dt_type: str = "MM",
+    date_range: str = "30d",
+    max_records: int = 5,
+) -> tuple[list[dict], dict]:
+    """
+    搜索模式：获取指定时间范围内的数据（最多 max_records 条）。
+
+    Returns:
+        (items, {}) — 搜索模式不更新水位线
+    """
+    dts = _date_range_to_dts(date_range, dt_type)
+
+    payload = {
+        "cid": cid,
+        "indicatorIds": [indic_id],
+        "das": [{"text": "全国", "value": DA_NATIONAL}],
+        "dts": [dts],
+        "showType": "1",
+        "rootId": ROOT_ID,
+    }
+
+    resp = session.post(
+        f"{BASE_URL}/getEsDataByCidAndDt",
+        json=payload,
+        headers={**HEADERS, "Content-Type": "application/json"},
+        verify=False,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data.get("success"):
+        return [], {}
+
+    records = data.get("data", [])
+    if not records:
+        return [], {}
+
+    records.sort(key=lambda r: r.get("code", ""), reverse=True)
+
+    items = []
+    prev_value = None
+    count = 0
+    for rec in records:
+        vals = rec.get("values", [])
+        if not vals or not vals[0].get("value", "").strip():
+            continue
+
+        rec_date_raw = rec.get("code", "")
+        rec_date = rec_date_raw.replace("MM", "").replace("SS", "").replace("YY", "")
+        rec_value = _safe_float(vals[0].get("value", ""))
+        if rec_value is None or not rec_date:
+            continue
+
+        change_pct = None
+        if prev_value is not None and prev_value != 0:
+            change_pct = round((rec_value - prev_value) / abs(prev_value) * 100, 2)
+
+        dt_name = f"{rec_date[:4]}年{rec_date[4:6]}月" if len(rec_date) == 6 else rec_date
+
+        items.append({
+            "title": f"[NBS] {indicator_name} — {dt_name}",
+            "content": (
+                f"Indicator: {indicator_name}\n"
+                f"Period: {dt_name}\n"
+                f"Value: {rec_value}\n"
+                + (f"Change: {change_pct}%\n" if change_pct is not None else "")
+            ),
+            "url": "https://data.stats.gov.cn/",
+            "source": "nbs",
+            "sourceType": "macro_data",
+            "publishedAt": _dt_to_iso(rec_date, dt_type),
+            "extraData": {
+                "indicatorCode": indic_id,
+                "indicatorName": indicator_name,
+                "cid": cid,
+                "latestDate": rec_date,
+                "latestValue": rec_value,
+                "changePercent": change_pct,
+            },
+        })
+
+        prev_value = rec_value
+        count += 1
+        if count >= max_records:
+            break
+
+    return items, {}
 
 
 def _safe_float(val: str) -> float | None:

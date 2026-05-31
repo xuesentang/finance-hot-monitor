@@ -56,13 +56,15 @@ def save_series_cache(cache: dict) -> None:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
+def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集 FRED 宏观数据。
 
     Args:
         keywords: 用户关键词（如 ["CPI", "GDP", "unemployment"]）
         watermark: {"extraData": {"CPIAUCSL": {"lastDate": "...", "lastValue": ...}}}
+        mode: "monitor"=监控模式, "search"=搜索模式
+        date_range: 搜索时间范围 (仅 search 模式)
 
     Returns:
         (items, new_watermark)
@@ -78,7 +80,6 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
 
     for kw in keywords:
         try:
-            # 尝试从缓存获取 Series ID
             series_id = series_cache.get(kw.upper())
             if not series_id:
                 series_id = search_series(kw)
@@ -91,13 +92,16 @@ def collect(keywords: list[str], watermark: dict) -> tuple[list[dict], dict]:
                 continue
 
             prev = extra_data.get(series_id, {})
-            item, new_prev = fetch_latest(series_id, kw, prev)
 
-            if item:
-                all_items.append(item)
+            if mode == "search":
+                items, new_prev = fetch_range(series_id, kw, date_range)
+            else:
+                item, new_prev = fetch_latest(series_id, kw, prev)
+                items = [item] if item else []
 
+            all_items.extend(items)
             new_extra_data[series_id] = new_prev
-            time.sleep(0.5)  # FRED 限制 120 req/min
+            time.sleep(0.5)
 
         except Exception as e:
             print(f"  FRED: '{kw}' failed - {e}", file=sys.stderr)
@@ -236,3 +240,98 @@ def fetch_latest(
 
     new_prev = {"lastDate": latest_date, "lastValue": latest_value}
     return item, new_prev
+
+
+def _date_range_obs_start(date_range: str) -> str:
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if date_range == "7d":
+        return (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    elif date_range == "30d":
+        return (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    elif date_range == "90d":
+        return (now - timedelta(days=90)).strftime("%Y-%m-%d")
+    else:
+        return (now - timedelta(days=365)).strftime("%Y-%m-%d")
+
+
+def fetch_range(
+    series_id: str, keyword: str, date_range: str, max_obs: int = 5
+) -> tuple[list[dict], dict]:
+    """
+    搜索模式：获取指定时间范围内的观测值（最多 max_obs 条）。
+
+    Returns:
+        (items, prev) — 搜索模式不更新水位线
+    """
+    obs_start = _date_range_obs_start(date_range)
+
+    url = f"{BASE_URL}/series/observations"
+    params = {
+        "series_id": series_id,
+        "api_key": API_KEY,
+        "file_type": "json",
+        "sort_order": "desc",
+        "observation_start": obs_start,
+        "limit": max_obs,
+    }
+    resp = requests.get(url, params=params, headers={"User-Agent": UA}, proxies=PROXIES, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    obs_list = data.get("observations", [])
+    valid_obs = [o for o in obs_list if o.get("value", ".") != "."]
+    if not valid_obs:
+        return [], {}
+
+    series_name = keyword
+    try:
+        info_url = f"{BASE_URL}/series"
+        info_params = {
+            "series_id": series_id,
+            "api_key": API_KEY,
+            "file_type": "json",
+        }
+        info_resp = requests.get(info_url, params=info_params, headers={"User-Agent": UA}, proxies=PROXIES, timeout=10)
+        info_data = info_resp.json()
+        series_info = info_data.get("seriess", [])
+        if series_info:
+            series_name = series_info[0].get("title", keyword)
+    except Exception:
+        pass
+
+    items = []
+    for obs in valid_obs:
+        obs_date = obs.get("date", "")
+        obs_value = float(obs.get("value", "0"))
+
+        change_pct = None
+        if len(valid_obs) > 1:
+            idx = valid_obs.index(obs)
+            if idx + 1 < len(valid_obs):
+                prev_val = float(valid_obs[idx + 1].get("value", "0"))
+                if prev_val != 0:
+                    change_pct = round((obs_value - prev_val) / abs(prev_val) * 100, 2)
+
+        items.append({
+            "title": f"[FRED] {series_name} — {obs_date}",
+            "content": (
+                f"Indicator: {series_name} ({series_id})\n"
+                f"Date: {obs_date}\n"
+                f"Value: {obs_value}\n"
+                + (f"Change: {change_pct}%\n" if change_pct is not None else "")
+            ),
+            "url": f"https://fred.stlouisfed.org/series/{series_id}",
+            "source": "fred",
+            "sourceType": "macro_data",
+            "publishedAt": f"{obs_date}T00:00:00Z",
+            "extraData": {
+                "seriesId": series_id,
+                "seriesName": series_name,
+                "latestDate": obs_date,
+                "latestValue": obs_value,
+                "changePercent": change_pct,
+            },
+        })
+
+    return items, {}

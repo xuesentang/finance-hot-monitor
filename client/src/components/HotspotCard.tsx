@@ -1,174 +1,166 @@
 import { useState } from 'react';
-import { ExternalLink, ChevronDown, ChevronUp, Share2, Clock, Target } from 'lucide-react';
-import type { Hotspot } from '../types/index.js';
-import { SOURCE_LABELS } from '../types/index.js';
+import { ExternalLink, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import type { Hotspot, SourceName } from '../types/index.js';
 
 interface HotspotCardProps {
   hotspot: Hotspot;
-  onNew?: boolean;
+  isNew?: boolean;
 }
 
-const IMPORTANCE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  high: { bg: 'bg-red-50 border-red-200', text: 'text-red-600', label: '高' },
-  medium: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-600', label: '中' },
-  low: { bg: 'bg-slate-50 border-slate-200', text: 'text-slate-500', label: '低' },
+const sourceConfig: Record<SourceName, { label: string; color: string; bg: string; border: string }> = {
+  'sec_edgar': { label: 'SEC EDGAR', color: 'text-source-sec', bg: 'bg-source-sec/10', border: 'border-source-sec/20' },
+  'juchao': { label: '巨潮资讯', color: 'text-source-juchao', bg: 'bg-source-juchao/10', border: 'border-source-juchao/20' },
+  'cailianshe': { label: '财联社', color: 'text-source-cailian', bg: 'bg-source-cailian/10', border: 'border-source-cailian/20' },
+  'eastmoney': { label: '东财全球', color: 'text-source-east', bg: 'bg-source-east/10', border: 'border-source-east/20' },
+  'fred': { label: 'FRED', color: 'text-source-fred', bg: 'bg-source-fred/10', border: 'border-source-fred/20' },
+  'nbs': { label: '国家统计局', color: 'text-source-nbs', bg: 'bg-source-nbs/10', border: 'border-source-nbs/20' },
 };
 
-const SOURCE_COLORS: Record<string, string> = {
-  sec_edgar: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  juchao: 'bg-violet-50 text-violet-700 border-violet-200',
-  cailianshe: 'bg-sky-50 text-sky-700 border-sky-200',
-  eastmoney: 'bg-teal-50 text-teal-700 border-teal-200',
-  fred: 'bg-orange-50 text-orange-700 border-orange-200',
-  nbs: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+const importanceConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  'high': { label: '高', color: 'text-high', bg: 'bg-high/10', border: 'border-high/20' },
+  'medium': { label: '中', color: 'text-medium', bg: 'bg-medium/10', border: 'border-medium/20' },
+  'low': { label: '低', color: 'text-low', bg: 'bg-low/10', border: 'border-low/20' },
 };
 
-export function HotspotCard({ hotspot, onNew }: HotspotCardProps) {
+export function HotspotCard({ hotspot, isNew }: HotspotCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const relatedSources: string[] = hotspot.relatedSources
-    ? JSON.parse(hotspot.relatedSources)
-    : [];
 
-  const sourceLabel = SOURCE_LABELS[hotspot.source as keyof typeof SOURCE_LABELS] || hotspot.source;
-  const sourceColor = SOURCE_COLORS[hotspot.source] || 'bg-slate-50 text-slate-600 border-slate-200';
-  const impStyle = IMPORTANCE_STYLES[hotspot.importance] || IMPORTANCE_STYLES.low;
+  const source = sourceConfig[hotspot.source] || {
+    label: hotspot.source,
+    color: 'text-text-secondary',
+    bg: 'bg-text-muted/10',
+    border: 'border-text-muted/20',
+  };
 
-  const time = hotspot.publishedAt || hotspot.createdAt;
-  const timeStr = new Date(time).toLocaleString('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const importance = importanceConfig[hotspot.importance] || importanceConfig['low'];
+
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return '未知时间';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes}分钟前`;
+    if (hours < 24) return `${hours}小时前`;
+    if (days < 7) return `${days}天前`;
+    return date.toLocaleDateString('zh-CN');
+  };
 
   return (
     <div
-      className={`bg-white border rounded-xl transition-all duration-200 hover:shadow-md cursor-pointer ${
-        onNew ? 'border-blue-300 bg-blue-50/40 shadow-blue-100' : 'border-slate-200'
+      className={`bg-bg-surface border rounded-xl p-5 transition-all duration-300 group ${
+        isNew
+          ? 'border-accent-purple/40 shadow-lg shadow-accent-purple/10 animate-slide-in'
+          : 'border-border hover:border-border-hover hover:bg-bg-surface-hover'
       }`}
     >
-      <div className="px-5 py-4">
-        <div className="flex items-start gap-4">
-          {/* 左侧：重要性指示条 */}
-          <div className={`w-1 self-stretch rounded-full shrink-0 ${
-            hotspot.importance === 'high' ? 'bg-red-500' :
-            hotspot.importance === 'medium' ? 'bg-amber-400' :
-            'bg-slate-300'
-          }`} />
+      {/* Top bar: source + importance + time */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${source.bg} ${source.color} border ${source.border}`}>
+          {source.label}
+        </span>
+        <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${importance.bg} ${importance.color} border ${importance.border}`}>
+          {importance.label}
+        </span>
+        {isNew && (
+          <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-accent-purple/10 text-accent-purple border border-accent-purple/20 flex items-center gap-1">
+            <Sparkles className="w-3 h-3" />
+            新
+          </span>
+        )}
+        <span className="text-text-muted text-xs ml-auto">
+          {formatDate(hotspot.publishedAt)}
+        </span>
+      </div>
 
-          <div className="flex-1 min-w-0">
-            {/* 标签行 */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-2">
-              <span className={`text-xs px-2 py-0.5 rounded-md border font-medium ${sourceColor}`}>
-                {sourceLabel}
-              </span>
-              <span className={`text-xs px-2 py-0.5 rounded-md border font-medium ${impStyle.bg} ${impStyle.text} border-current/20`}>
-                {impStyle.label}
-              </span>
-              {hotspot.eventType && hotspot.eventType !== 'other' && (
-                <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200">
-                  {hotspot.eventType}
-                </span>
-              )}
-              {relatedSources.length > 0 && (
-                <span className="text-xs text-slate-400 flex items-center gap-1">
-                  <Share2 className="w-3 h-3" />
-                  {relatedSources.length + 1} 源
-                </span>
-              )}
+      {/* Title */}
+      <h3 className="text-text-primary font-semibold text-sm leading-relaxed mb-2 group-hover:text-accent-purple transition-colors duration-200">
+        {hotspot.title}
+      </h3>
+
+      {/* AI Summary */}
+      {hotspot.summary && (
+        <div className="mb-3">
+          <p className={`text-text-secondary text-sm leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
+            {hotspot.summary}
+          </p>
+        </div>
+      )}
+
+      {/* Expandable details */}
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-border space-y-2.5 animate-slide-in">
+          {hotspot.eventType && <DetailRow label="事件类型" value={hotspot.eventType} />}
+          <DetailRow label="相关度" value={`${hotspot.relevance}%`} highlight />
+          {hotspot.relevanceReason && <DetailRow label="相关度原因" value={hotspot.relevanceReason} />}
+          {hotspot.importanceReason && <DetailRow label="重要性原因" value={hotspot.importanceReason} />}
+          {hotspot.affectedHoldings && (
+            <div className="flex items-center gap-2 text-high text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-high animate-pulse" />
+              可能影响持仓
             </div>
+          )}
+        </div>
+      )}
 
-            {/* 标题 */}
-            <h3 className="text-sm font-semibold text-blue-950 leading-snug mb-1.5 group">
-              <a
-                href={hotspot.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-primary transition-colors duration-150"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {hotspot.title}
-                <ExternalLink className="w-3 h-3 inline ml-1 text-slate-300 group-hover:text-primary transition-colors" />
-              </a>
-            </h3>
+      {/* Bottom bar */}
+      <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
+        <div className="flex items-center gap-2 flex-wrap">
+          {hotspot.keyword && (
+            <span className="px-1.5 py-0.5 rounded-md bg-bg-elevated text-text-secondary text-[11px] font-medium">
+              {hotspot.keyword.text}
+            </span>
+          )}
+          <span className="font-mono text-accent-orange text-xs font-semibold">
+            {hotspot.relevance}%
+          </span>
+        </div>
 
-            {/* AI 摘要 */}
-            {hotspot.summary && (
-              <p className="text-sm text-slate-600 leading-relaxed mb-2 line-clamp-2">
-                {hotspot.summary}
-              </p>
-            )}
-
-            {/* 底部信息 */}
-            <div className="flex items-center gap-3 text-xs text-slate-400">
-              <span className="flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                {timeStr}
-              </span>
-              {hotspot.keyword && (
-                <span className="px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-500">
-                  {hotspot.keyword.text}
-                </span>
-              )}
-              {hotspot.relevance > 0 && (
-                <span className="flex items-center gap-1">
-                  <Target className="w-3 h-3" />
-                  {hotspot.relevance}%
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* 展开按钮 */}
+        <div className="flex items-center gap-2">
+          {hotspot.url && (
+            <a
+              href={hotspot.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-accent-purple hover:text-accent-pink text-xs transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              原文
+            </a>
+          )}
           <button
             onClick={() => setExpanded(!expanded)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors duration-150 cursor-pointer shrink-0 self-start"
-            aria-label={expanded ? '收起详情' : '展开详情'}
+            className="flex items-center gap-1 text-text-muted hover:text-text-secondary text-xs transition-colors"
           >
             {expanded ? (
-              <ChevronUp className="w-4 h-4 text-slate-400" />
+              <>
+                <ChevronUp className="w-3.5 h-3.5" />
+                收起
+              </>
             ) : (
-              <ChevronDown className="w-4 h-4 text-slate-400" />
+              <>
+                <ChevronDown className="w-3.5 h-3.5" />
+                详情
+              </>
             )}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* 展开详情 */}
-      {expanded && (
-        <div className="px-5 pb-4 border-t border-slate-100">
-          <div className="pt-3 space-y-3">
-            {/* 原始内容 */}
-            <div className="bg-slate-50 rounded-lg p-3 max-h-48 overflow-y-auto">
-              <p className="text-xs text-slate-600 whitespace-pre-wrap leading-relaxed">
-                {hotspot.content}
-              </p>
-            </div>
-
-            {/* AI 分析详情 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-              {hotspot.relevanceReason && (
-                <div className="bg-blue-50/50 rounded-lg p-2.5">
-                  <span className="text-blue-400 font-medium">相关性</span>
-                  <p className="text-slate-600 mt-0.5">{hotspot.relevanceReason}</p>
-                </div>
-              )}
-              {hotspot.importanceReason && (
-                <div className="bg-amber-50/50 rounded-lg p-2.5">
-                  <span className="text-amber-400 font-medium">重要性</span>
-                  <p className="text-slate-600 mt-0.5">{hotspot.importanceReason}</p>
-                </div>
-              )}
-              {hotspot.eventFingerprint && (
-                <div className="col-span-full bg-slate-50 rounded-lg p-2.5">
-                  <span className="text-slate-400 font-medium">事件指纹</span>
-                  <code className="text-xs text-slate-500 ml-2">{hotspot.eventFingerprint}</code>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+function DetailRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="text-text-muted text-xs shrink-0 w-16">{label}</span>
+      <span className={`text-sm ${highlight ? 'text-accent-orange font-mono font-semibold' : 'text-text-secondary'}`}>
+        {value}
+      </span>
     </div>
   );
 }

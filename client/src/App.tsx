@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { HotspotsPage } from './pages/HotspotsPage.js';
 import { KeywordsPage } from './pages/KeywordsPage.js';
-import { Activity, Settings, TrendingUp } from 'lucide-react';
+import { Activity, Settings, TrendingUp, Zap } from 'lucide-react';
 
 type Route = 'hotspots' | 'keywords';
 
@@ -25,46 +25,92 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-primary" />
-            <h1 className="text-base font-semibold text-blue-950 tracking-tight">
+    <div className="min-h-screen bg-atmosphere flex">
+      {/* Sidebar */}
+      <aside className="w-64 bg-bg-base border-r border-border flex flex-col shrink-0">
+        {/* Logo */}
+        <div className="p-6 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-purple via-accent-pink to-accent-orange flex items-center justify-center shadow-lg shadow-accent-purple/20">
+            <TrendingUp className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-text-primary font-bold text-base tracking-tight leading-none">
               金融热点监控
             </h1>
+            <p className="text-text-muted text-[10px] mt-0.5 tracking-wider uppercase">Finance Monitor</p>
           </div>
-          <nav className="flex gap-1">
-            <button
-              onClick={() => navigate('hotspots')}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                route === 'hotspots'
-                  ? 'bg-primary text-white shadow-sm'
-                  : 'text-slate-500 hover:text-blue-900 hover:bg-slate-100'
-              }`}
-            >
-              <Activity className="w-4 h-4 inline mr-1.5" />
-              热点
-            </button>
-            <button
-              onClick={() => navigate('keywords')}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                route === 'keywords'
-                  ? 'bg-primary text-white shadow-sm'
-                  : 'text-slate-500 hover:text-blue-900 hover:bg-slate-100'
-              }`}
-            >
-              <Settings className="w-4 h-4 inline mr-1.5" />
-              关键词
-            </button>
-          </nav>
         </div>
-      </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-6">
-        {route === 'hotspots' ? <HotspotsPage /> : <KeywordsPage />}
+        {/* Navigation */}
+        <nav className="flex-1 px-3 space-y-1">
+          <NavItem
+            icon={Activity}
+            label="热点监控"
+            active={route === 'hotspots'}
+            onClick={() => navigate('hotspots')}
+          />
+          <NavItem
+            icon={Settings}
+            label="关键词管理"
+            active={route === 'keywords'}
+            onClick={() => navigate('keywords')}
+          />
+        </nav>
+
+        {/* Bottom status */}
+        <div className="p-4 border-t border-border">
+          <div className="flex items-center gap-2.5">
+            <div className="relative">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-500 animate-ping opacity-40" />
+            </div>
+            <div>
+              <p className="text-text-secondary text-xs">6 个信源运行中</p>
+              <p className="text-text-muted text-[10px]">实时监控活跃</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1 min-w-0 overflow-auto">
+        <div className="max-w-5xl mx-auto px-8 py-8">
+          {route === 'hotspots' && <HotspotsPage />}
+          {route === 'keywords' && <KeywordsPage />}
+        </div>
       </main>
     </div>
+  );
+}
+
+function NavItem({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer relative group ${
+        active
+          ? 'bg-bg-surface text-text-primary'
+          : 'text-text-secondary hover:text-text-primary hover:bg-bg-surface/50'
+      }`}
+    >
+      {/* Active indicator */}
+      {active && (
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 rounded-r-full bg-gradient-to-b from-accent-purple to-accent-pink" />
+      )}
+      <Icon className={`w-[18px] h-[18px] ${active ? 'text-accent-purple' : 'text-text-muted group-hover:text-text-secondary'}`} />
+      <span>{label}</span>
+      {active && <Zap className="w-3.5 h-3.5 text-accent-orange ml-auto" />}
+    </button>
   );
 }
 

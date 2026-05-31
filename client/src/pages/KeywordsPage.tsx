@@ -1,151 +1,170 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Power, PowerOff, Tag } from 'lucide-react';
 import { keywordsApi } from '../services/api.js';
 import type { Keyword } from '../types/index.js';
-
-const TYPE_LABELS: Record<string, string> = {
-  stock_code: '代码',
-  stock_name: '公司',
-  sector: '板块',
-  macro: '宏观',
-  policy: '政策',
-  generic: '通用',
-};
+import { Plus, Trash2, Settings, Tag, AlertTriangle } from 'lucide-react';
 
 export function KeywordsPage() {
   const [keywords, setKeywords] = useState<Keyword[]>([]);
-  const [text, setText] = useState('');
+  const [newKeyword, setNewKeyword] = useState('');
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const fetchKeywords = useCallback(async () => {
     try {
       const data = await keywordsApi.list();
       setKeywords(data);
-    } catch (e) {
-      console.error('Failed to load keywords:', e);
+    } catch (err) {
+      setError('获取关键词失败');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    fetchKeywords();
+  }, [fetchKeywords]);
 
-  const handleAdd = async () => {
-    if (!text.trim() || adding) return;
-    setAdding(true);
+  const addKeyword = async () => {
+    if (!newKeyword.trim()) return;
     try {
-      await keywordsApi.create(text.trim());
-      setText('');
-      await load();
-    } catch (e: any) {
-      alert(e.message || '添加失败');
-    } finally {
-      setAdding(false);
+      await keywordsApi.create(newKeyword.trim());
+      setNewKeyword('');
+      fetchKeywords();
+    } catch (err) {
+      setError('添加关键词失败');
     }
   };
 
-  const handleToggle = async (kw: Keyword) => {
+  const deleteKeyword = async (id: string) => {
     try {
-      await keywordsApi.toggle(kw.id);
-      await load();
-    } catch (e) {
-      console.error('Toggle failed:', e);
+      await keywordsApi.remove(id);
+      fetchKeywords();
+    } catch (err) {
+      setError('删除关键词失败');
     }
   };
 
-  const handleDelete = async (kw: Keyword) => {
-    if (!confirm(`确定删除关键词「${kw.text}」？`)) return;
+  const toggleKeyword = async (id: string) => {
     try {
-      await keywordsApi.remove(kw.id);
-      await load();
-    } catch (e) {
-      console.error('Delete failed:', e);
+      await keywordsApi.toggle(id);
+      fetchKeywords();
+    } catch (err) {
+      setError('更新关键词失败');
     }
   };
 
   return (
-    <div>
-      <div className="flex gap-2 mb-6">
-        <input
-          type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-          placeholder="添加关键词：AAPL / CPI / 000002 / 新能源..."
-          className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-shadow duration-200"
-        />
-        <button
-          onClick={handleAdd}
-          disabled={adding || !text.trim()}
-          className="px-5 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-200 cursor-pointer flex items-center gap-1.5"
-        >
-          <Plus className="w-4 h-4" />
-          添加
-        </button>
+    <div className="space-y-8">
+      {/* Page header */}
+      <div>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight">关键词管理</h1>
+        <p className="text-text-secondary text-sm mt-1">配置监控关键词，系统将自动追踪相关内容</p>
       </div>
 
-      {loading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-14 bg-white rounded-xl border border-slate-200 animate-pulse" />
-          ))}
+      {/* Add keyword */}
+      <div className="bg-bg-surface border border-border rounded-2xl p-5">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-accent-purple/10">
+            <Tag className="w-4 h-4 text-accent-purple" />
+          </div>
+          <div className="flex-1">
+            <label className="text-text-primary text-sm font-semibold">添加关键词</label>
+            <p className="text-text-muted text-xs mt-0.5">输入关键词后按回车或点击添加</p>
+          </div>
         </div>
-      ) : keywords.length === 0 ? (
-        <div className="text-center py-16">
-          <Tag className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">暂无关键词</p>
-          <p className="text-slate-300 text-xs mt-1">在上方输入框中添加第一个监控关键词</p>
+        <div className="flex gap-3 mt-4">
+          <input
+            type="text"
+            value={newKeyword}
+            onChange={(e) => setNewKeyword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
+            placeholder="例如：AAPL、美联储、加息..."
+            className="flex-1 px-4 py-2.5 bg-bg-input border border-border rounded-xl text-text-primary text-sm placeholder:text-text-muted focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
+          />
+          <button
+            onClick={addKeyword}
+            disabled={!newKeyword.trim()}
+            className="px-5 py-2.5 bg-gradient-to-r from-accent-purple to-accent-pink text-white rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-accent-purple/20"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {keywords.map((kw) => (
-            <div
-              key={kw.id}
-              className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-3 hover:border-slate-300 transition-colors duration-150"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`w-2 h-2 rounded-full shrink-0 ${kw.isActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                <span className={`text-sm font-medium truncate ${kw.isActive ? 'text-blue-950' : 'text-slate-400 line-through'}`}>
-                  {kw.text}
-                </span>
-                <span className="text-[11px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-md font-medium shrink-0">
-                  {TYPE_LABELS[kw.type] || kw.type}
-                </span>
-                {kw._count && (
-                  <span className="text-xs text-slate-400 tabular-nums shrink-0">
-                    {kw._count.hotspots} 条
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => handleToggle(kw)}
-                  className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors duration-150 cursor-pointer"
-                  title={kw.isActive ? '暂停监控' : '启用监控'}
-                  aria-label={kw.isActive ? '暂停监控' : '启用监控'}
-                >
-                  {kw.isActive ? (
-                    <Power className="w-4 h-4 text-emerald-500" />
-                  ) : (
-                    <PowerOff className="w-4 h-4 text-slate-300" />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleDelete(kw)}
-                  className="p-1.5 rounded-lg hover:bg-red-50 transition-colors duration-150 cursor-pointer"
-                  title="删除"
-                  aria-label={`删除关键词 ${kw.text}`}
-                >
-                  <Trash2 className="w-4 h-4 text-slate-300 hover:text-red-500" />
-                </button>
-              </div>
+        {error && (
+          <div className="flex items-center gap-2 mt-3 text-high text-sm">
+            <AlertTriangle className="w-4 h-4" />
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* Keywords list */}
+      <div className="bg-bg-surface border border-border rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-accent-purple" />
+            <span className="text-text-primary text-sm font-semibold">已配置关键词</span>
+          </div>
+          <span className="text-text-muted text-xs">{keywords.length} 个关键词</span>
+        </div>
+
+        {loading ? (
+          <div className="p-8 space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-12 shimmer rounded-lg" />
+            ))}
+          </div>
+        ) : keywords.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-bg-elevated border border-border mb-4 animate-float">
+              <Tag className="w-6 h-6 text-text-muted" />
             </div>
-          ))}
-        </div>
-      )}
+            <p className="text-text-secondary text-sm font-medium">暂无关键词</p>
+            <p className="text-text-muted text-xs mt-1">添加关键词开始监控金融热点</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {keywords.map((keyword) => (
+              <div
+                key={keyword.id}
+                className="flex items-center justify-between px-5 py-3.5 hover:bg-bg-surface-hover transition-colors group"
+              >
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => toggleKeyword(keyword.id)}
+                    className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${
+                      keyword.isActive ? 'bg-accent-purple' : 'bg-text-muted/30'
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                        keyword.isActive ? 'translate-x-4' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                  <span
+                    className={`text-sm font-medium ${
+                      keyword.isActive ? 'text-text-primary' : 'text-text-muted line-through'
+                    }`}
+                  >
+                    {keyword.text}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-text-muted text-xs">
+                    匹配 {keyword._count?.hotspots || 0} 条
+                  </span>
+                  <button
+                    onClick={() => deleteKeyword(keyword.id)}
+                    className="p-1.5 rounded-lg text-text-muted hover:text-high hover:bg-high/10 transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
