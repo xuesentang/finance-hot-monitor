@@ -146,10 +146,17 @@
 
 ### 4.4 前端页面
 
-| 页面 | 功能 |
-|------|------|
-| 关键词管理 | 增删关键词，启用/暂停，查看列表 |
-| 热点列表 | 时间倒序，按重要性/信源筛选，查看详情 |
+| 页面 | 功能 | 设计特征 |
+|------|------|---------|
+| 热点列表 | 时间倒序，按重要性/信源筛选，查看详情 | 暗色 Dashboard 布局，侧边栏导航，4 列统计卡片，渐变强调色，丰富微动效 |
+| 关键词管理 | 增删关键词，启用/暂停，查看列表 | 渐变添加按钮，滑动开关，hover 删除按钮 |
+
+**UI 风格**：暗色金融科技风（Dark Fintech）
+- 深色基底 `#0B0E14` + 紫→粉→橙渐变强调色
+- 左侧深色侧边栏导航（参考 Krypcore Dashboard）
+- 字体：Space Grotesk（标题）+ DM Sans（正文）+ JetBrains Mono（数字）
+- 玻璃拟态卡片：渐变顶部线 + hover 发光效果
+- 微动效：stagger 入场、slideIn 新热点、hover 上浮、float 空状态、shimmer 加载
 
 **不做**：仪表盘、设置页、健康监控面板
 
@@ -220,7 +227,7 @@ MacroObservation
 - 后端：Node.js + Express 5 + Prisma + SQLite + Socket.io
 - AI：DeepSeek-V4-Flash API（替换 OpenRouter）
 - 数据采集：Python 脚本（调用 a-stock-data 端点 + SEC EDGAR/FRED/NBS API）
-- 前端：React 19 + TypeScript + Vite + Tailwind CSS
+- 前端：React 19 + TypeScript + Vite + Tailwind CSS v4，暗色金融科技风格（Dark Fintech）
 
 ---
 

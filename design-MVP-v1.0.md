@@ -82,7 +82,9 @@ D:\finance-hot-monitor\
 ├── PRD-MVP.md
 ├── 信息筛选机制设计（4）.md
 ├── design-MVP-v1.0.md         # 本文件
-└── SESSION_STATE.md
+├── SESSION_STATE.md
+├── .gitignore                 # Git 忽略规则（排除 .env、*.db、node_modules 等）
+└── server/.env.example        # 环境变量模板（已脱敏，供新用户参考）
 ```
 
 ---
@@ -567,43 +569,75 @@ const SOURCE_AUTHORITY: Record<string, number> = {
 
 ## 八、前端页面设计
 
-### 8.1 路由
+### 8.1 布局架构
+
+采用**左侧深色侧边栏 + 右侧主内容区**的 Dashboard 布局：
+
+```
+┌─────────────────────────────────────────┐
+│  Sidebar (dark)    │  Main Content       │
+│  ────────────────  │  ─────────────────  │
+│  [Logo] 金融热点    │  Page Header        │
+│  ────────────────  │  Stats Cards (4)    │
+│  ⚡ 热点监控  ◄──   │  Filter Bar         │
+│  ⚙ 关键词管理      │  Hotspot List       │
+│  ────────────────  │                     │
+│  ● 6 信源运行中    │                     │
+└─────────────────────────────────────────┘
+```
+
+**Sidebar 特征**：
+- Logo 区：渐变紫→橙图标 + 品牌名 + 英文副标题
+- 导航项：图标 + 文字 + 活跃状态指示条（左侧 3px 渐变条）
+- 底部状态：绿色脉冲点 + "6 个信源运行中" + "实时监控活跃"
+
+### 8.2 路由
 
 | 路径 | 页面 | 说明 |
 |------|------|------|
-| `/` | 重定向到 `/hotspots` | — |
-| `/hotspots` | HotspotsPage | 热点列表（默认首页） |
-| `/keywords` | KeywordsPage | 关键词管理 |
+| `/#/hotspots` | HotspotsPage | 热点列表（默认首页） |
+| `/#/keywords` | KeywordsPage | 关键词管理 |
 
 > **搜索功能**：搜索页面 `SearchPage` 的路由、import、API 均已注释隔离，用户界面不可见。代码保留在仓库中，后续如需恢复取消注释即可。
-
-### 8.2 关键词管理页（KeywordsPage）
-
-**布局**：顶部输入框 + 添加按钮，下方列表。
-
-**列表项**：关键词文本 + 类型标签 + 启用/暂停开关 + 删除按钮。
-
-**交互**：
-- 输入框输入文本 → 点击添加 → 调用 POST `/api/keywords`
-- 开关切换 → 调用 PATCH `/api/keywords/:id`
-- 删除 → 确认弹窗 → 调用 DELETE `/api/keywords/:id`
+> **路由方式**：使用 `window.location.hash` 实现客户端路由，无额外路由库依赖。
 
 ### 8.3 热点列表页（HotspotsPage）
 
-**布局**：顶部筛选栏（重要性/信源下拉） + 热点卡片列表。
+**页面结构**（从上到下）：
 
-**HotspotCard**：
-- 标题 + 来源标签
-- AI 摘要（`summary` 字段）
-- 重要性标记（high/medium 不同颜色）
-- 关联信源数（`relatedSources` 不为空时显示「N 个信源报道」）
-- 点击展开详情：原始内容全文 + AI 分析详情（事件类型、相关性分数、相关性理由、重要性理由）+ 原始链接
+1. **Page Header**：页面标题 + 副标题 + 通知铃铛按钮（带未读角标）
+2. **Stats Cards（4 列）**：热点总数 / 今日新增 / 高相关度 / 活跃信源
+   - 每个卡片：渐变顶部线 + 图标 + 大数字（JetBrains Mono）+ hover 底部发光
+   - stagger 入场动画（依次延迟 80ms）
+3. **Filter Bar**：暗色筛选面板，4 列并排（信源 / 重要性 / 事件性质 / 排序）
+4. **Hotspot List**：卡片垂直堆叠，每个卡片包含：
+   - 顶部标签行：信源标签（彩色）+ 重要性标签 + 新热点标记（Sparkles 图标）+ 时间
+   - 标题：hover 变紫色
+   - AI 摘要：默认 2 行，可展开
+   - 展开详情：事件类型、相关度、相关度原因、重要性原因、持仓影响警告
+   - 底部：关键词标签 + 相关度百分比 + 原文链接 + 展开/收起按钮
 
-**实时更新**：WebSocket 监听 `hotspot:new`，新热点自动出现在列表顶部。
+**新热点动画**：紫色边框 + 阴影 + `slideIn` 入场动画，5 秒后自动消退
 
-**筛选条件**：重要性（全部/high/medium/low）、信源（全部/6 个信源各自）、关键词（全部/各活跃关键词）。
+**空状态**：浮动图标 + "暂无热点数据" + 说明文字
 
-### 8.4 状态管理
+**加载状态**：shimmer 骨架屏
+
+### 8.4 关键词管理页（KeywordsPage）
+
+**页面结构**：
+
+1. **Page Header**：标题 + 副标题
+2. **Add Keyword Card**：
+   - 图标 + 标题 + 说明
+   - 输入框（暗色底 + 圆角）+ 渐变添加按钮（紫→粉）
+   - 回车快捷添加
+3. **Keywords List Card**：
+   - 表头：图标 + "已配置关键词" + 数量
+   - 列表项：滑动开关（紫/灰）+ 关键词文本 + 匹配数量 + 删除按钮（hover 显示）
+   - 空状态：浮动图标
+
+### 8.5 状态管理
 
 不引入 Redux/Zustand。MVP 用 React 内置 `useState` + `useEffect`，通过 `api.ts` 和 `socket.ts` 管理数据流。两个页面各自独立获取数据，不共享全局状态。
 
@@ -611,16 +645,36 @@ const SOURCE_AUTHORITY: Record<string, number> = {
 
 ## 九、关键配置文件
 
-### 9.1 后端环境变量（`.env`）
+### 9.1 后端环境变量
 
-```
+**生产环境**：通过平台环境变量注入，不提交到仓库。
+
+**本地开发**：使用 `.env` 文件（已被 `.gitignore` 排除，不会提交）。
+
+**模板文件**：`server/.env.example`（已提交到仓库，供新用户参考）：
+
+```bash
+# 数据库配置
 DATABASE_URL="file:./dev.db"
-DEEPSEEK_API_KEY="sk-xxx"
-FRED_API_KEY="xxx"
+
+# AI API Key（必填）
+# 获取地址：https://platform.deepseek.com/
+DEEPSEEK_API_KEY="sk-your-deepseek-api-key-here"
+
+# FRED API Key（可选，用于宏观经济数据采集）
+# 获取地址：https://fred.stlouisfed.org/docs/api/api_key.html
+FRED_API_KEY="your-fred-api-key-here"
+
+# 前端地址（开发环境）
 CLIENT_URL="http://localhost:5173"
+
+# 服务端口号
 PORT=3001
-HTTPS_PROXY=http://127.0.0.1:7890
-HTTP_PROXY=http://127.0.0.1:7890
+
+# 代理配置（仅本地开发需要，用于访问海外信源）
+# 生产环境请注释掉以下两行
+# HTTPS_PROXY=http://127.0.0.1:7890
+# HTTP_PROXY=http://127.0.0.1:7890
 ```
 
 ### 9.2 信源配置（`server/src/config/sources.ts`）
