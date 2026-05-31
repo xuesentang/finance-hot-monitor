@@ -1,5 +1,13 @@
 {
+  "name": "finance-hot-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"cd server && npm run dev\" \"cd client && npm run dev\"",
+    "build": "cd server && npm run build",
+    "test": "cd server && npm test"
+  },
   "devDependencies": {
-    "typescript": "^6.0.3"
+    "concurrently": "^8.2.2"
   }
 }

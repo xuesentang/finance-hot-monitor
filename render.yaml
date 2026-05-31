@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: finance-hot-monitor-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: PORT
+        value: "3001"
+      - key: NODE_ENV
+        value: "production"

@@ -28,7 +28,10 @@ export async function collectFromSource(
   mode: 'monitor' | 'search' = 'monitor',
   dateRange: string = '30d',
 ): Promise<CollectorOutput> {
-  const pythonBin = path.resolve(__dirname, '..', '..', '..', 'fhot-venv', 'Scripts', 'python.exe');
+  const isWindows = process.platform === 'win32';
+  const pythonBin = isWindows
+    ? path.resolve(__dirname, '..', '..', '..', 'fhot-venv', 'Scripts', 'python.exe')
+    : path.resolve(__dirname, '..', '..', '..', 'fhot-venv', 'bin', 'python');
 
   const args: string[] = [
     COLLECTOR_SCRIPT,

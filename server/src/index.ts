@@ -115,8 +115,8 @@ io.on('connection', (socket) => {
 });
 
 // 定时任务：按信源类型独立频率
-// 快讯类（财联社 + 东财）：每 2 分钟
-cron.schedule('*/2 * * * *', async () => {
+// 快讯类（财联社 + 东财）：每 20 分钟
+cron.schedule('*/20 * * * *', async () => {
   try {
     await checkFastSources(io);
   } catch (error) {
@@ -124,8 +124,8 @@ cron.schedule('*/2 * * * *', async () => {
   }
 });
 
-// 公告类（SEC EDGAR + 巨潮）：每 10 分钟
-cron.schedule('*/10 * * * *', async () => {
+// 公告类（SEC EDGAR + 巨潮）：每 1 小时
+cron.schedule('0 * * * *', async () => {
   try {
     await checkAnnouncementSources(io);
   } catch (error) {
@@ -133,8 +133,8 @@ cron.schedule('*/10 * * * *', async () => {
   }
 });
 
-// 宏观类（FRED + NBS）：每小时
-cron.schedule('0 * * * *', async () => {
+// 宏观类（FRED + NBS）：每 2 小时
+cron.schedule('0 */2 * * *', async () => {
   try {
     await checkMacroSources(io);
   } catch (error) {
