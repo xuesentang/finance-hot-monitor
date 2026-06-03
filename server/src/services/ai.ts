@@ -2,6 +2,18 @@ import type { AIAnalysis, SourceType } from '../types.js';
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
 const MODEL = 'deepseek-v4-flash';
+const AI_REQUEST_TIMEOUT_MS = 30_000;
+
+/** 带超时的 fetch，超时后抛出 AbortError */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number = AI_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // ========== 关键词类型检测 ==========
 
@@ -70,7 +82,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
       generic: '生成各种写法、中英文对照、常见别称',
     };
 
-    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+    const response = await fetchWithTimeout(`${DEEPSEEK_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -183,7 +195,7 @@ export async function searchStrategy(query: string): Promise<{
   const allSources = ['sec_edgar', 'juchao', 'cailianshe', 'eastmoney', 'fred', 'nbs'];
 
   try {
-    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+    const response = await fetchWithTimeout(`${DEEPSEEK_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -389,7 +401,7 @@ export async function analyzeContent(
   }
 
   try {
-    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+    const response = await fetchWithTimeout(`${DEEPSEEK_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -15,6 +15,14 @@ const MAX_TOTAL = 50;
 const recentlyPushed = new Map<string, number>();
 const PUSH_DEDUP_WINDOW = 30 * 60 * 1000;
 
+// 定期清理过期记录，防止 Map 无限增长
+setInterval(() => {
+  const threshold = Date.now() - PUSH_DEDUP_WINDOW;
+  for (const [fp, ts] of recentlyPushed) {
+    if (ts < threshold) recentlyPushed.delete(fp);
+  }
+}, 10 * 60 * 1000); // 每 10 分钟清理一次
+
 /**
  * 从数据库读取信源水位线。
  */

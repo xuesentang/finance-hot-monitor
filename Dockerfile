@@ -48,4 +48,7 @@ ENV PYTHONUTF8=1
 EXPOSE 3001
 
 # 启动命令：先同步数据库 schema，再启动服务
+# ⚠️ --accept-data-loss 会静默丢弃不兼容的列，生产环境建议：
+#   1. 开发阶段用 prisma db push（快速迭代）
+#   2. 上线后改用 prisma migrate deploy（严格校验）
 CMD cd server && npx prisma db push --accept-data-loss && node dist/index.js

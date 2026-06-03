@@ -22,15 +22,37 @@ dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+
+const socketAllowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(s => s.trim())
+  : ['http://localhost:5173'];
+
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (socketAllowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`Origin ${origin} not allowed`));
+    },
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 
 // 中间件
-app.use(cors());
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(s => s.trim())
+  : ['http://localhost:5173'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // 允许无 origin 的请求（如 curl、服务端调用）
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`Origin ${origin} not allowed by CORS`));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // 路由
@@ -83,8 +105,13 @@ app.get('/api/goto', async (req, res) => {
 });
 
 // 健康检查
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', db: 'connected', timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ status: 'error', db: 'disconnected', timestamp: new Date().toISOString() });
+  }
 });
 
 // 手动触发全源热点检查
@@ -149,9 +176,9 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`
   🔥 金融热点监控服务启动
-  📡 http://localhost:${PORT}
+  📡 http://0.0.0.0:${PORT}
   🔌 WebSocket ready
-  ⏱  快讯: */2min | 公告: */10min | 宏观: hourly
+  ⏱  快讯: */20min | 公告: hourly | 宏观: */2h
   `);
 });
 
