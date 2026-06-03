@@ -191,6 +191,18 @@ export function HotspotsPage() {
               key={hotspot.id}
               hotspot={hotspot}
               isNew={newHotspotIds.has(hotspot.id)}
+              onDelete={async (id) => {
+                try {
+                  await hotspotsApi.remove(id);
+                  setHotspots((prev) => prev.filter((h) => h.id !== id));
+                  setStats((prev) => ({
+                    ...prev,
+                    totalHotspots: Math.max(0, prev.totalHotspots - 1),
+                  }));
+                } catch (error) {
+                  console.error('Failed to delete hotspot:', error);
+                }
+              }}
             />
           ))}
         </div>

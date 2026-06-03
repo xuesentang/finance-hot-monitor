@@ -57,6 +57,16 @@ def _date_range_to_se_date(date_range: str) -> str:
     return f"{start}~{end}"
 
 
+def _monitor_first_run_cutoff() -> str:
+    """监控模式首次运行（水位线为空）时，只拉最近7天的数据。"""
+    from datetime import datetime, timedelta, timezone
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    return f"{start}~{end}"
+
+
 def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集巨潮公告。
@@ -251,6 +261,9 @@ def fetch_announcements(
 
     # 使用 searchkey 而非 stock+orgId —— orgId 映射对科创板(688xxx)等不准确
     # searchkey 支持股票代码全文搜索，对所有板块都有效
+    # 监控模式首次运行（lastId 和 lastDate 都为空）时，兜底只拉最近7天
+    is_first_run = mode == "monitor" and not prev.get("lastId") and not prev.get("lastDate")
+    se_date = _date_range_to_se_date(date_range) if mode == "search" else (_monitor_first_run_cutoff() if is_first_run else "")
     payload = {
         "stock": "",
         "tabName": "fulltext",
@@ -259,7 +272,7 @@ def fetch_announcements(
         "column": "",
         "category": "",
         "plate": "",
-        "seDate": _date_range_to_se_date(date_range) if mode == "search" else "",
+        "seDate": se_date,
         "searchkey": code,
         "secid": "",
         "sortName": "",

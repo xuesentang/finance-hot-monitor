@@ -169,6 +169,25 @@ cron.schedule('0 */2 * * *', async () => {
   }
 });
 
+// 数据清理：每天凌晨 3 点删除 3 天前的热点和通知
+const CLEANUP_RETENTION_DAYS = 3;
+cron.schedule('0 3 * * *', async () => {
+  const cutoff = new Date(Date.now() - CLEANUP_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  console.log(`🧹 Running daily cleanup (before ${cutoff.toISOString()})...`);
+  try {
+    // Prisma 级联删除：先删 Notification，再删 Hotspot
+    const { count: notifCount } = await prisma.notification.deleteMany({
+      where: { createdAt: { lt: cutoff } },
+    });
+    const { count: hotspotCount } = await prisma.hotspot.deleteMany({
+      where: { createdAt: { lt: cutoff } },
+    });
+    console.log(`✅ Cleanup done: ${hotspotCount} hotspots, ${notifCount} notifications removed`);
+  } catch (error) {
+    console.error('❌ Daily cleanup failed:', error);
+  }
+});
+
 export { io };
 
 const PORT = process.env.PORT || 3001;

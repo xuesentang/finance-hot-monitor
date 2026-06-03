@@ -33,6 +33,14 @@ def _date_range_cutoff(date_range: str) -> int:
     return int(cutoff.timestamp())
 
 
+def _monitor_first_run_cutoff() -> int:
+    """监控模式首次运行（水位线为空）时，只拉最近24小时的数据。"""
+    tz_cn = timezone(timedelta(hours=8))
+    now = datetime.now(tz_cn)
+    cutoff = now - timedelta(hours=24)
+    return int(cutoff.timestamp())
+
+
 def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_range: str = "30d") -> tuple[list[dict], dict]:
     """
     采集东财全球资讯。
@@ -70,7 +78,9 @@ def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_ra
     if not news_list:
         return [], watermark
 
-    cutoff_ts = _date_range_cutoff(date_range) if mode == "search" else 0
+    # 监控模式首次运行（lastTimestamp 为 0）时，兜底只拉最近24小时
+    is_first_run = mode == "monitor" and last_ts == 0
+    cutoff_ts = _date_range_cutoff(date_range) if mode == "search" else (_monitor_first_run_cutoff() if is_first_run else 0)
 
     new_last_ts = last_ts
     items = []
@@ -95,6 +105,10 @@ def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_ra
             continue
 
         if mode == "search" and ts < cutoff_ts:
+            continue
+
+        # 首次运行时 also apply cutoff
+        if is_first_run and ts < cutoff_ts:
             continue
 
         if ts > new_last_ts:

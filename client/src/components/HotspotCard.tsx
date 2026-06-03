@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { ExternalLink, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { ExternalLink, ChevronDown, ChevronUp, Sparkles, Trash2 } from 'lucide-react';
 import type { Hotspot, SourceName } from '../types/index.js';
 
 interface HotspotCardProps {
   hotspot: Hotspot;
   isNew?: boolean;
+  onDelete?: (id: string) => void;
 }
 
 const sourceConfig: Record<SourceName, { label: string; color: string; bg: string; border: string }> = {
@@ -22,8 +23,9 @@ const importanceConfig: Record<string, { label: string; color: string; bg: strin
   'low': { label: '低', color: 'text-low', bg: 'bg-low/10', border: 'border-low/20' },
 };
 
-export function HotspotCard({ hotspot, isNew }: HotspotCardProps) {
+export function HotspotCard({ hotspot, isNew, onDelete }: HotspotCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const source = sourceConfig[hotspot.source] || {
     label: hotspot.source,
@@ -148,6 +150,24 @@ export function HotspotCard({ hotspot, isNew }: HotspotCardProps) {
               </>
             )}
           </button>
+          {onDelete && (
+            <button
+              onClick={async () => {
+                if (deleting) return;
+                setDeleting(true);
+                try {
+                  await onDelete(hotspot.id);
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+              disabled={deleting}
+              className="flex items-center gap-1 text-text-muted hover:text-high text-xs transition-colors disabled:opacity-50"
+              title="删除"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
     </div>
