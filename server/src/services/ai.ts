@@ -1,4 +1,5 @@
 import type { AIAnalysis, SourceType } from '../types.js';
+import { A_STOCK_CODE_MAP } from '../config/stockCodes.js';
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
 const MODEL = 'deepseek-v4-flash';
@@ -30,20 +31,99 @@ const SECTOR_NAMES = new Set([
 
 const COMPANY_SUFFIX = /(集团|股份|有限|科技|控股|银行|保险|证券|信托|基金|汽车|医药|地产|能源|钢铁|航空|港口|路桥|水泥|玻璃|纸业|酒业|食品|饮料|服装|家电|电子|通信|软件|网络|传媒|旅游|酒店)/;
 
-function detectKeywordType(keyword: string): KeywordType {
+export function detectKeywordType(keyword: string): KeywordType {
   // A 股代码：6 位数字，以 0/3/6 开头
   if (/^\d{6}$/.test(keyword) && /^[0-36]/.test(keyword)) return 'stock_code';
+  // 宏观指标（必须在美股代码之前，否则 CPI/PPI 等会被误判为股票代码）
+  if (MACRO_INDICATORS.test(keyword)) return 'macro_indicator';
   // 美股代码：1-5 位纯字母
   if (/^[A-Z]{1,5}$/.test(keyword)) return 'stock_code';
-  // 宏观指标
-  if (MACRO_INDICATORS.test(keyword)) return 'macro_indicator';
   // 板块/概念
   if (SECTOR_NAMES.has(keyword)) return 'sector';
   // 政策
   if (keyword.includes('政策') || keyword.includes('监管') || keyword.includes('证监会') || keyword.includes('央行')) return 'policy';
   // 公司名：含公司特征后缀
   if (COMPANY_SUFFIX.test(keyword)) return 'stock_name';
+  // A 股公司名/别名：在映射表中能查到
+  if (A_STOCK_CODE_MAP[keyword]) return 'stock_name';
   return 'generic';
+}
+
+/**
+ * 基于关键词类型的默认变体，用于无 AI 时的基础匹配能力。
+ */
+function getDefaultVariants(keyword: string, type: KeywordType): string[] {
+  const variants: string[] = [];
+
+  switch (type) {
+    case 'stock_code': {
+      for (const [name, code] of Object.entries(A_STOCK_CODE_MAP)) {
+        if (code === keyword) { variants.push(name); break; }
+      }
+      break;
+    }
+    case 'stock_name': {
+      const code = A_STOCK_CODE_MAP[keyword];
+      if (code) variants.push(code);
+      break;
+    }
+    case 'macro_indicator': {
+      const macroAliases: Record<string, string[]> = {
+        'CPI': ['消费者物价指数', 'Consumer Price Index'],
+        'PPI': ['生产者物价指数', 'Producer Price Index'],
+        'GDP': ['国内生产总值', 'Gross Domestic Product'],
+        'PMI': ['采购经理指数', 'Purchasing Managers Index'],
+        'M2': ['广义货币供应量'],
+        'M1': ['狭义货币供应量'],
+        'LPR': ['贷款市场报价利率'],
+      };
+      const key = keyword.toUpperCase();
+      if (macroAliases[key]) variants.push(...macroAliases[key]);
+      for (const [eng, chs] of Object.entries(macroAliases)) {
+        if (chs.some(c => keyword.includes(c))) variants.push(eng);
+      }
+      break;
+    }
+    case 'sector': {
+      const sectorAliases: Record<string, string[]> = {
+        'AI': ['人工智能', 'Artificial Intelligence'],
+        '人工智能': ['AI'],
+        '新能源车': ['新能源汽车', '电动车', 'EV'],
+        '新能源汽车': ['新能源车', '电动车', 'EV'],
+        '半导体': ['芯片', 'chip', 'semiconductor'],
+        '芯片': ['半导体', 'chip', 'semiconductor'],
+      };
+      if (sectorAliases[keyword]) variants.push(...sectorAliases[keyword]);
+      break;
+    }
+  }
+
+  return variants;
+}
+
+/**
+ * 从关键词中提取核心实体标识，用于跨关键词策略共享。
+ */
+export function extractCoreEntity(keyword: string, type?: KeywordType): string {
+  const kwType = type || detectKeywordType(keyword);
+  switch (kwType) {
+    case 'stock_code':
+      return `stock:${keyword}`;
+    case 'stock_name': {
+      const code = A_STOCK_CODE_MAP[keyword];
+      return code ? `stock:${code}` : `stock_name:${keyword}`;
+    }
+    case 'macro_indicator': {
+      const match = keyword.match(/(CPI|PPI|GDP|PMI|GNP|GNI|M1|M2|LPR)/i);
+      return match ? `macro:${match[1].toUpperCase()}` : `macro:${keyword}`;
+    }
+    case 'sector':
+      return `sector:${keyword}`;
+    case 'policy':
+      return `policy:${keyword}`;
+    default:
+      return `generic:${keyword}`;
+  }
 }
 
 // ========== Query Expansion ==========
@@ -123,7 +203,8 @@ ${typeHints[kwType] || typeHints.generic}
 
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
-      const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map((s) => s.trim()).filter(Boolean)])];
+      const defaultVariants = getDefaultVariants(keyword, kwType);
+      const expanded = [...new Set([keyword, ...coreTerms, ...defaultVariants, ...parsed.map((s) => s.trim()).filter(Boolean)])];
       setExpansionCache(keyword, expanded);
       console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
       return expanded;
@@ -132,7 +213,8 @@ ${typeHints[kwType] || typeHints.generic}
     console.error('Query expansion failed:', error);
   }
 
-  const fallback = [keyword, ...coreTerms];
+  const defaultVariants = getDefaultVariants(keyword, kwType);
+  const fallback = [...new Set([keyword, ...coreTerms, ...defaultVariants])];
   setExpansionCache(keyword, fallback);
   return fallback;
 }
@@ -449,10 +531,10 @@ export async function analyzeContent(
     return {
       eventType: 'other',
       isSubstantial: matchResult.matched,
-      relevance: matchResult.matched ? 30 : 10,
+      relevance: matchResult.matched ? 50 : 25,
       relevanceReason: 'AI 分析失败，使用默认分数',
       keywordMentioned: matchResult.matched,
-      importance: 'low',
+      importance: matchResult.matched ? 'medium' : 'low',
       importanceReason: 'AI 分析失败',
       summary: content.slice(0, 80),
       affectedHoldings: false,

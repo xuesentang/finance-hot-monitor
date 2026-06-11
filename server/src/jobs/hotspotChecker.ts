@@ -1,15 +1,28 @@
 import type { Server } from 'socket.io';
 import { prisma } from '../db.js';
-import { expandKeyword, searchStrategy, preMatchKeyword, analyzeContent, normalizeSourceNames } from '../services/ai.js';
+import { expandKeyword, searchStrategy, preMatchKeyword, analyzeContent, normalizeSourceNames, extractCoreEntity, detectKeywordType } from '../services/ai.js';
 import { collectFromSource } from '../services/collector.js';
 import { shouldFilter } from '../utils/filter.js';
 import { SOURCE_AUTHORITY } from '../config/sources.js';
-import { A_STOCK_CODE_MAP, ensureStockCodes } from '../config/stockCodes.js';
+import { A_STOCK_CODE_MAP, ensureStockCodes, matchStockBySubstr } from '../config/stockCodes.js';
 import type { RawContent, SourceName, Watermark } from '../types.js';
 
-// 每关键词每轮次每个信源最多 10 条 AI 分析，总额 50 条
-const MAX_PER_SOURCE = 10;
-const MAX_TOTAL = 50;
+// 配额按关键词类型分档
+function getQuotaByType(keywordType: string): { maxPerSource: number; maxTotal: number } {
+  switch (keywordType) {
+    case 'stock_code':
+    case 'stock_name':
+      return { maxPerSource: 15, maxTotal: 80 };
+    case 'sector':
+      return { maxPerSource: 10, maxTotal: 50 };
+    case 'macro_indicator':
+      return { maxPerSource: 3, maxTotal: 10 };
+    case 'policy':
+      return { maxPerSource: 10, maxTotal: 50 };
+    default:
+      return { maxPerSource: 10, maxTotal: 50 };
+  }
+}
 
 // 防重复推送：30 分钟内相同 eventFingerprint 不重复推送
 const recentlyPushed = new Map<string, number>();
@@ -70,6 +83,25 @@ async function saveWatermark(
 }
 
 /**
+ * 并发池：同时运行最多 concurrency 个异步任务。
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  fn: (item: T) => Promise<void>,
+  concurrency: number = 3
+): Promise<void> {
+  const executing = new Set<Promise<void>>();
+  for (const item of items) {
+    const p = fn(item).then(() => { executing.delete(p); });
+    executing.add(p);
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+}
+
+/**
  * 对每个关键词、每个信源调用 Python 采集，串联筛选→AI→去重→入库→推送。
  */
 async function checkSources(
@@ -87,20 +119,64 @@ async function checkSources(
 
   let totalNew = 0;
 
-  for (const keyword of keywords) {
+  // 快讯源预拉取：关键词循环前先拉一次，循环内复用缓存
+  const fastSourceCache = new Map<SourceName, RawContent[]>();
+  const fastSources = sources.filter(s => s === 'cailianshe' || s === 'eastmoney') as SourceName[];
+  for (const source of fastSources) {
+    try {
+      const watermark = await loadWatermark(source);
+      const result = await collectFromSource(source, [], watermark);
+      await saveWatermark(source, result.watermark);
+      fastSourceCache.set(source, result.items);
+      console.log(`  📦 Pre-fetched ${source}: ${result.items.length} items`);
+    } catch (error) {
+      console.error(`  ${source} pre-fetch failed:`, error);
+      fastSourceCache.set(source, []);
+    }
+  }
+
+  await runWithConcurrency(keywords, async (keyword) => {
     console.log(`\n📎 Checking keyword: "${keyword.text}"`);
 
     try {
+      // 计算 normalizedKey（用于策略共享）
+      const normalizedKey = keyword.normalizedKey || extractCoreEntity(keyword.text, keyword.type as any);
+      if (!keyword.normalizedKey) {
+        await prisma.keyword.update({
+          where: { id: keyword.id },
+          data: { normalizedKey },
+        });
+      }
+
+      // 前置跳过：用已有策略判断与本次 cron 信源是否有交集，无交集直接跳过
+      {
+        const cachedStrategy = keyword.searchStrategy;
+        if (cachedStrategy) {
+          try {
+            const parsed = JSON.parse(cachedStrategy);
+            const targetSources = normalizeSourceNames(parsed.targetSources || []);
+            const overlap = sources.filter(s => targetSources.includes(s));
+            if (overlap.length === 0) {
+              console.log(`  ⏭ Early skip: "${keyword.text}" has no matching sources for this cron`);
+              return;
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
       // 搜索策略：A股快车道优先，否则读取/生成AI策略
       let strategy: { searchTerms: string[]; targetSources: string[] } | null = null;
 
-      // A 股快车道：关键词在硬编码映射表中 → 跳过 AI，直接用代码搜巨潮
-      if (A_STOCK_CODE_MAP[keyword.text]) {
+      // A 股快车道：子串匹配公司名 → 跳过 AI，直接用代码搜巨潮+快讯
+      const stockMatch = matchStockBySubstr(keyword.text);
+      const kwType = detectKeywordType(keyword.text);
+      if (stockMatch.length > 0 && (kwType === 'stock_name' || kwType === 'stock_code' || kwType === 'generic')) {
+        const [, code] = stockMatch[0];
         strategy = {
-          searchTerms: [A_STOCK_CODE_MAP[keyword.text]],
-          targetSources: ['juchao'],
+          searchTerms: [code],
+          targetSources: ['juchao', 'cailianshe', 'eastmoney'],
         };
-        console.log(`  🚀 A-stock fast lane: "${keyword.text}" → ${strategy.searchTerms[0]} → juchao`);
+        console.log(`  🚀 A-stock fast lane: "${keyword.text}" → ${code} → juchao+cailianshe+eastmoney`);
       } else if (keyword.searchStrategy) {
         try {
           const parsed = JSON.parse(keyword.searchStrategy);
@@ -110,6 +186,24 @@ async function checkSources(
             strategy = parsed;
           }
         } catch { /* ignore malformed JSON */ }
+      }
+
+      // 跨关键词策略共享：用 normalizedKey 查找同实体的已有策略
+      if (!strategy && normalizedKey) {
+        const existing = await prisma.keyword.findFirst({
+          where: { normalizedKey, searchStrategy: { not: null }, id: { not: keyword.id } },
+          select: { searchStrategy: true },
+        });
+        if (existing?.searchStrategy) {
+          try {
+            const parsed = JSON.parse(existing.searchStrategy);
+            if (parsed.searchTerms?.length) {
+              parsed.targetSources = normalizeSourceNames(parsed.targetSources || []);
+              strategy = parsed;
+              console.log(`  🔄 Reused strategy from same entity (${normalizedKey})`);
+            }
+          } catch { /* ignore */ }
+        }
       }
 
       if (!strategy || !strategy.searchTerms?.length) {
@@ -136,13 +230,13 @@ async function checkSources(
         : sources;
 
       // 硬编码兜底：A 股公司关键词强制加入 juchao
-      if (A_STOCK_CODE_MAP[keyword.text] && !strategySources.includes('juchao')) {
+      if (stockMatch.length > 0 && !strategySources.includes('juchao')) {
         strategySources = [...new Set([...strategySources, 'juchao' as SourceName])];
       }
 
       if (strategySources.length === 0) {
         console.log(`  ⏭ No matching sources for strategy`);
-        continue;
+        return;
       }
 
       // 第2层：Query Expansion（仍用于 Node 层预匹配）
@@ -153,33 +247,30 @@ async function checkSources(
 
       for (const source of strategySources) {
         try {
-          // 读取水位线
-          const watermark = await loadWatermark(source);
-
-          // 快讯源不传关键词（全量拉取），其他源传策略关键词
           const isFastSource = source === 'cailianshe' || source === 'eastmoney';
-          const sourceKw = isFastSource ? [] : collectorKw;
 
-          // 调用 Python 采集
-          const result = await collectFromSource(source, sourceKw, watermark);
-
-          // 写回水位线
-          await saveWatermark(source, result.watermark);
-
-          // 快讯源需要在 Node 侧做关键词预匹配
-          if (isFastSource && result.items.length > 0) {
-            let matchedCount = 0;
-            for (const item of result.items) {
-              const fullText = `${item.title}\n${item.content}`;
-              const pm = preMatchKeyword(fullText, expandedKeywords);
-              if (pm.matched) {
-                item.expandedTerms = pm.matchedTerms;
-                allItems.push(item);
-                matchedCount++;
+          if (isFastSource) {
+            // 快讯源：使用预拉取的缓存数据
+            const cachedItems = fastSourceCache.get(source) || [];
+            if (cachedItems.length > 0) {
+              let matchedCount = 0;
+              for (const item of cachedItems) {
+                const fullText = `${item.title}\n${item.content}`;
+                const pm = preMatchKeyword(fullText, expandedKeywords);
+                if (pm.matched) {
+                  item.expandedTerms = pm.matchedTerms;
+                  allItems.push(item);
+                  matchedCount++;
+                }
               }
+              console.log(`  ${source}: ${cachedItems.length} cached → ${matchedCount} matched`);
             }
-            console.log(`  ${source}: ${result.items.length} raw → ${matchedCount} matched`);
           } else {
+            // 非快讯源：正常采集
+            const watermark = await loadWatermark(source);
+            const sourceKw = collectorKw;
+            const result = await collectFromSource(source, sourceKw, watermark);
+            await saveWatermark(source, result.watermark);
             allItems.push(...result.items);
             if (result.items.length > 0) {
               console.log(`  ${source}: ${result.items.length} items`);
@@ -190,9 +281,10 @@ async function checkSources(
         }
       }
 
-      if (allItems.length === 0) continue;
+      if (allItems.length === 0) return;
 
       // 配额控制：按信源权威性排序，权威信源优先分配配额
+      const { maxPerSource, maxTotal } = getQuotaByType(keyword.type);
       const sortedItems = [...allItems].sort((a, b) => {
         return (SOURCE_AUTHORITY[a.source] || 99) - (SOURCE_AUTHORITY[b.source] || 99);
       });
@@ -202,8 +294,8 @@ async function checkSources(
 
       for (const item of sortedItems) {
         const count = quotaBySource.get(item.source) || 0;
-        if (count >= MAX_PER_SOURCE) continue;
-        if (quotaItems.length >= MAX_TOTAL) break;
+        if (count >= maxPerSource) continue;
+        if (quotaItems.length >= maxTotal) break;
         quotaBySource.set(item.source, count + 1);
         quotaItems.push(item);
       }
@@ -233,7 +325,7 @@ async function checkSources(
           );
 
           // 第4层：阈值过滤
-          const filterResult = shouldFilter(item, analysis);
+          const filterResult = shouldFilter(item, analysis, keyword.type as 'stock_code' | 'stock_name' | 'sector' | 'macro_indicator' | 'policy' | 'generic');
           if (!filterResult.pass) {
             console.log(`  ⏭ Filtered [${filterResult.reason}]: ${item.title.slice(0, 50)}...`);
             continue;
@@ -313,7 +405,9 @@ async function checkSources(
           // 创建通知
           await prisma.notification.create({
             data: {
-              type: 'hotspot',
+              type: analysis.importance === 'high' ? 'HIGH_RELEVANCE'
+                  : analysis.isSubstantial ? 'SUBSTANTIAL_EVENT'
+                  : 'hotspot',
               title: `新热点: ${hotspot.title.slice(0, 50)}`,
               content: analysis.summary || hotspot.content.slice(0, 100),
               hotspotId: hotspot.id,
@@ -330,9 +424,11 @@ async function checkSources(
             }
             if (fp) recentlyPushed.set(fp, now);
 
-            io.emit('hotspot:new', hotspot);
-            io.emit('notification', {
-              type: 'hotspot',
+            io.emit('newHotspot', hotspot);
+            io.emit('newNotification', {
+              type: analysis.importance === 'high' ? 'HIGH_RELEVANCE'
+                  : analysis.isSubstantial ? 'SUBSTANTIAL_EVENT'
+                  : 'hotspot',
               title: '发现新热点',
               content: hotspot.title,
               hotspotId: hotspot.id,
@@ -341,7 +437,11 @@ async function checkSources(
           }
 
           console.log(`  ✅ [${item.source}][${analysis.importance}] ${hotspot.title.slice(0, 60)}...`);
-        } catch (error) {
+        } catch (error: any) {
+          if (error.code === 'P2002') {
+            console.log(`  ⏭ Duplicate on create, skipping`);
+            continue;
+          }
           console.error(`  Error processing item:`, error);
         }
       }
@@ -350,12 +450,10 @@ async function checkSources(
         console.log(`  ${keywordNew} new hotspots for "${keyword.text}"`);
       }
 
-      // 关键词间避免过快请求
-      await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`Error checking keyword "${keyword.text}":`, error);
     }
-  }
+  }, 3);
 
   // 清理过期防重复记录
   const threshold = Date.now() - PUSH_DEDUP_WINDOW;

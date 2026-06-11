@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { detectKeywordType, extractCoreEntity } from '../services/ai.js';
 
 const router = Router();
 
@@ -49,10 +50,13 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Keyword text is required' });
     }
 
+    const detectedType = detectKeywordType(text.trim());
+    const normalizedKey = extractCoreEntity(text.trim(), detectedType);
     const keyword = await prisma.keyword.create({
       data: {
         text: text.trim(),
-        type: type?.trim() || 'generic',
+        type: type?.trim() || detectedType,
+        normalizedKey,
       },
     });
 
@@ -71,11 +75,16 @@ router.put('/:id', async (req, res) => {
   try {
     const { text, type, isActive } = req.body;
 
+    const updatedText = text !== undefined ? text.trim() : undefined;
+    const detectedType = updatedText ? detectKeywordType(updatedText) : undefined;
+    const normalizedKey = updatedText && detectedType ? extractCoreEntity(updatedText, detectedType) : undefined;
     const keyword = await prisma.keyword.update({
       where: { id: req.params.id },
       data: {
-        ...(text !== undefined && { text: text.trim() }),
+        ...(updatedText !== undefined && { text: updatedText }),
         ...(type !== undefined && { type: type.trim() || 'generic' }),
+        ...(!type && detectedType && { type: detectedType }),
+        ...(normalizedKey && { normalizedKey }),
         ...(isActive !== undefined && { isActive }),
       },
     });

@@ -14,9 +14,12 @@ model Keyword {
   type           String    @default("generic")
   isActive       Boolean   @default(true)
   searchStrategy String?   // AI 生成的搜索策略 JSON (searchTerms + targetSources)
+  normalizedKey  String?   // 核心实体标识，如 stock:688256, macro:CPI
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   hotspots       Hotspot[]
+
+  @@index([normalizedKey])
 }
 
 model Hotspot {

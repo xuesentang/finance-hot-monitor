@@ -14,6 +14,7 @@ router.get('/', async (req, res) => {
       importance,
       keywordId,
       sourceType,
+      isSubstantial,
       sortBy = 'createdAt',
       sortOrder = 'desc',
     } = req.query;
@@ -23,10 +24,13 @@ router.get('/', async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const where: Record<string, unknown> = {};
-    if (source) where.source = source;
-    if (importance) where.importance = importance;
+    if (source) where.source = (source as string).toLowerCase();
+    if (importance) where.importance = (importance as string).toLowerCase();
     if (keywordId) where.keywordId = keywordId;
     if (sourceType) where.sourceType = sourceType;
+    if (isSubstantial !== undefined) {
+      where.isSubstantial = isSubstantial === 'true';
+    }
 
     const needsMemorySort = sortBy === 'importance';
 

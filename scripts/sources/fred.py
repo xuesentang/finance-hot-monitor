@@ -70,7 +70,8 @@ def collect(keywords: list[str], watermark: dict, mode: str = "monitor", date_ra
         (items, new_watermark)
     """
     if not API_KEY:
-        raise ValueError("FRED_API_KEY not set in environment")
+        print("  FRED: API key not set, skipping", file=sys.stderr)
+        return [], {}
 
     extra_data = watermark.get("extraData", {}) if watermark else {}
     new_extra_data = dict(extra_data)

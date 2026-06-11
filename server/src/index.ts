@@ -169,20 +169,39 @@ cron.schedule('0 */2 * * *', async () => {
   }
 });
 
-// 数据清理：每天凌晨 3 点删除 3 天前的热点和通知
-const CLEANUP_RETENTION_DAYS = 3;
+// 数据清理：每天凌晨 3 点，按重要性分级保留
 cron.schedule('0 3 * * *', async () => {
-  const cutoff = new Date(Date.now() - CLEANUP_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  console.log(`🧹 Running daily cleanup (before ${cutoff.toISOString()})...`);
+  console.log('🧹 Running daily cleanup...');
   try {
-    // Prisma 级联删除：先删 Notification，再删 Hotspot
-    const { count: notifCount } = await prisma.notification.deleteMany({
-      where: { createdAt: { lt: cutoff } },
+    const lowCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const medHighCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    // low 重要性：保留 3 天
+    const lowHotspotIds = await prisma.hotspot.findMany({
+      where: { importance: 'low', createdAt: { lt: lowCutoff } },
+      select: { id: true },
     });
-    const { count: hotspotCount } = await prisma.hotspot.deleteMany({
-      where: { createdAt: { lt: cutoff } },
+    if (lowHotspotIds.length > 0) {
+      const ids = lowHotspotIds.map(h => h.id);
+      await prisma.notification.deleteMany({ where: { hotspotId: { in: ids } } });
+      await prisma.hotspot.deleteMany({ where: { id: { in: ids } } });
+    }
+
+    // medium + high：保留 7 天
+    const medHighHotspotIds = await prisma.hotspot.findMany({
+      where: {
+        importance: { in: ['medium', 'high'] },
+        createdAt: { lt: medHighCutoff },
+      },
+      select: { id: true },
     });
-    console.log(`✅ Cleanup done: ${hotspotCount} hotspots, ${notifCount} notifications removed`);
+    if (medHighHotspotIds.length > 0) {
+      const ids = medHighHotspotIds.map(h => h.id);
+      await prisma.notification.deleteMany({ where: { hotspotId: { in: ids } } });
+      await prisma.hotspot.deleteMany({ where: { id: { in: ids } } });
+    }
+
+    console.log(`✅ Cleanup done: ${lowHotspotIds.length} low(3d) + ${medHighHotspotIds.length} med/high(7d) removed`);
   } catch (error) {
     console.error('❌ Daily cleanup failed:', error);
   }
@@ -197,7 +216,7 @@ httpServer.listen(PORT, () => {
   🔥 金融热点监控服务启动
   📡 http://0.0.0.0:${PORT}
   🔌 WebSocket ready
-  ⏱  快讯: */20min | 公告: hourly | 宏观: */2h
+  ⏱  快讯: */20min | 公告: hourly | 宏观: daily@21:00
   `);
 });
 

@@ -28,6 +28,17 @@ jobs:
             npx prisma generate
             npx tsc
 
+            echo '=== Sync database schema ==='
+            npx prisma db push
+
+            echo '=== Migrate keyword data ==='
+            npx tsx scripts/migrate-keywords.ts
+
+            echo '=== Build frontend ==='
+            cd $PROJ/client
+            npm ci
+            npm run build
+
             echo '=== Restart ==='
             pm2 restart finance-monitor
             sleep 3

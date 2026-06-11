@@ -7,12 +7,12 @@ interface FilterBarProps {
 }
 
 const sources = [
-  { value: 'SEC_EDGAR', label: 'SEC EDGAR' },
-  { value: 'JUCHAO', label: '巨潮公告' },
-  { value: 'CAILIAN', label: '财联社' },
-  { value: 'EASTMONEY', label: '东财全球' },
-  { value: 'FRED', label: 'FRED' },
-  { value: 'NBS', label: '国家统计局' },
+  { value: 'sec_edgar', label: 'SEC EDGAR' },
+  { value: 'juchao', label: '巨潮公告' },
+  { value: 'cailianshe', label: '财联社' },
+  { value: 'eastmoney', label: '东财全球' },
+  { value: 'fred', label: 'FRED' },
+  { value: 'nbs', label: '国家统计局' },
 ];
 
 export function FilterBar({ filter, onFilterChange }: FilterBarProps) {
@@ -85,9 +85,9 @@ export function FilterBar({ filter, onFilterChange }: FilterBarProps) {
             className="w-full px-3 py-2 bg-bg-input border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/20 transition-all"
           >
             <option value="">全部</option>
-            <option value="HIGH">高</option>
-            <option value="MEDIUM">中</option>
-            <option value="LOW">低</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
           </select>
         </div>
 

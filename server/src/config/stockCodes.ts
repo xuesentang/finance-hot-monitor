@@ -17,7 +17,25 @@ export const A_STOCK_CODE_MAP: Record<string, string> = {
   '长江电力': '600900', '中兴通讯': '000063', '立讯精密': '002475', '工业富联': '601138',
   '韦尔股份': '603501', '北方华创': '002371', '金山办公': '688111', '中微公司': '688012',
   '科大讯飞': '002230', '阳光电源': '300274', '三一重工': '600031', '海尔智家': '600690',
+  '茅台': '600519',
+  '平安': '601318',
+  '宁德': '300750',
 };
+
+/**
+ * 子串匹配：检查文本中是否包含已知 A 股公司名，返回匹配到的所有 [公司名, 代码] 对。
+ * 按名称长度降序排列，优先匹配更具体的名称（如"贵州茅台"优先于"茅台"）。
+ */
+export function matchStockBySubstr(text: string): Array<[string, string]> {
+  const results: Array<[string, string]> = [];
+  for (const [name, code] of Object.entries(A_STOCK_CODE_MAP)) {
+    if (text.includes(name)) {
+      results.push([name, code]);
+    }
+  }
+  results.sort((a, b) => b[0].length - a[0].length);
+  return results;
+}
 
 /**
  * 检查查询文本中是否包含已知 A 股公司名，将对应股票代码插入关键词列表。
@@ -25,11 +43,8 @@ export const A_STOCK_CODE_MAP: Record<string, string> = {
  */
 export function ensureStockCodes(query: string, keywords: string[]): string[] {
   const result = [...keywords];
-  const lowerQuery = query.toLowerCase();
-  for (const [name, code] of Object.entries(A_STOCK_CODE_MAP)) {
-    if (lowerQuery.includes(name.toLowerCase()) && !result.includes(code)) {
-      result.unshift(code);
-    }
+  for (const [, code] of matchStockBySubstr(query)) {
+    if (!result.includes(code)) result.unshift(code);
   }
   return result;
 }

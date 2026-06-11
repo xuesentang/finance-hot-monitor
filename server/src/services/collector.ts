@@ -20,8 +20,35 @@ interface CollectorOutput {
  */
 const MAX_STDOUT_BYTES = 5 * 1024 * 1024;
 const COLLECTOR_TIMEOUT_MS = 60_000;
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1000;
 
 export async function collectFromSource(
+  source: SourceName,
+  keywords: string[],
+  watermark: Watermark,
+  mode: 'monitor' | 'search' = 'monitor',
+  dateRange: string = '30d',
+): Promise<CollectorOutput> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await collectFromSourceInner(source, keywords, watermark, mode, dateRange);
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        console.warn(`  ⚠️ ${source} attempt ${attempt} failed, retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+async function collectFromSourceInner(
   source: SourceName,
   keywords: string[],
   watermark: Watermark,
